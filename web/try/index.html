@@ -1,0 +1,95 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- METRONOME for the M-VAVE FM-1, tried in the browser: fm1-emu (github.com/joakimeriksson/fm1-emu) runs the release
+     package itself in WebAssembly. Until The Firmware Hub lists it, the package comes from this repository's own
+     GitHub Pages (PKG below, served with CORS); once listed, ?fw=<hub id> follows each release. &embed=1 shows only
+     the synth and its controls. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Try METRONOME</title>
+<style>
+  :root { --bg: #f6f6f3; --fg: #1b1b1f; --dim: #6b6b73; --card: #ffffff; --line: #dcdcd6; --accent: #b8860b; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #111114; --fg: #ececf0; --dim: #9a9aa6; --card: #1b1b20; --line: #2c2c34; --accent: #f0c85a; }
+  }
+  :root[data-theme="dark"] { --bg: #111114; --fg: #ececf0; --dim: #9a9aa6; --card: #1b1b20; --line: #2c2c34; --accent: #f0c85a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  p.lead { color: var(--dim); margin: 0 0 16px; }
+  a { color: var(--accent); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 14px 0; }
+  h2 { font-size: 1.05rem; margin: 0 0 8px; }
+  .emu { width: 100%; aspect-ratio: 1300 / 1060; border: 0; border-radius: 10px; background: #1b1b20; display: block; }
+  .row { display: flex; gap: 10px 16px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+  .dim { color: var(--dim); }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 14px; }
+  button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; }
+  ol, ul { padding-left: 1.2em; margin: 6px 0; }
+  li { margin: 3px 0; }
+  code, kbd { font-family: ui-monospace, monospace; font-size: .92em; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--bg); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Try METRONOME</h1>
+  <p class="lead">METRONOME on an FM-1 in your browser: the same firmware you would install, run by the
+    <a href="https://github.com/joakimeriksson/fm1-emu">fm1-emu</a> emulator. Press <b>Start</b> on the screen, then
+    click the synth once so it hears your keyboard. Back to the <a href="../">setlist editor</a> ·
+    <a href="../cheatsheet.html">cheatsheet</a> · <a href="https://github.com/daviddwlee84/fm1-metronome">source</a>.</p>
+
+  <iframe class="emu" id="emu" title="METRONOME in the FM-1 emulator" allow="autoplay; midi"></iframe>
+  <div class="row">
+    <button id="reload" type="button">Reload the emulator</button>
+    <a id="full">Open it full page</a>
+  </div>
+
+  <div class="cols">
+    <section>
+      <h2>Things to try</h2>
+      <ol>
+        <li><b>Play.</b> It starts on SET with one song at 120. <b>PLAY</b>: an accent and three beats; the pendulum
+          swings, the black keys flash with the beat.</li>
+        <li><b>A tempo.</b> Turn <b>SELECT</b> (fast: 5 a click), or <b>K2</b> to jump between ALLEGRO, PRESTO,
+          ADAGIO … Or press <b>REC</b>, a white key, and tap it on the beat.</li>
+        <li><b>A setlist.</b> In EDIT (<b>REC</b>) press other white keys: each is a song with its own tempo. Out of
+          EDIT, press one while playing: it starts at the next bar.</li>
+        <li><b>A pattern.</b> <b>HOME</b>: the song's GRID. Turn <b>K3</b> to 6/8 or 7/8 2+2+3, click steps (keys)
+          for accents and ghosts.</li>
+        <li><b>Rhythm-watch style.</b> On GRID press <b>SEL</b>: CLASSIC. <b>K2</b> up adds eighths between the beats,
+          <b>OCT-</b> sets the accent every 3.</li>
+      </ol>
+    </section>
+    <section>
+      <h2>Keys on the computer</h2>
+      <ul>
+        <li>The piano keys: <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> <kbd>F</kbd> … are white keys, <kbd>W</kbd>
+          <kbd>E</kbd> <kbd>T</kbd> … the black ones.</li>
+        <li>Buttons and knobs: click or drag them on the panel.</li>
+        <li>The emulator's own <a href="https://joakimeriksson.github.io/fm1-emu/#guide">guide</a> has the whole map.</li>
+      </ul>
+      <h2>Here, not on an FM-1</h2>
+      <ul>
+        <li>The songs are kept in this browser, not on a device. To plan a real FM-1's setlist, use the
+          <a href="../">setlist editor</a>.</li>
+        <li>Timing follows your computer: a busy one makes the clicks less even than the real thing.</li>
+      </ul>
+    </section>
+  </div>
+</main>
+<script>
+"use strict";
+// the package: this site's copy of the newest release (web/try/metronome.fwsc); after the Hub lists METRONOME,
+// SRC becomes https://joakimeriksson.github.io/fm1-emu/?fw=<hub id>
+const PKG = new URL("metronome.fwsc", location.href).href;
+const BASE = `https://joakimeriksson.github.io/fm1-emu/?package=${encodeURIComponent(PKG)}&name=metronome&chip=uc25hq80`;
+document.getElementById("emu").src = `${BASE}&embed=1`;
+document.getElementById("full").href = BASE;
+document.getElementById("reload").onclick = () => { document.getElementById("emu").src = `${BASE}&embed=1&t=${Date.now()}`; };
+</script>
+</body>
+</html>

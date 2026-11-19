@@ -1,0 +1,386 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- METRONOME for the M-VAVE FM-1: the setlist editor. Edit 16 songs, hear them here, save them as a file, and send
+     them to an FM-1 running METRONOME 0.3 or newer (Web MIDI with SysEx, Chrome or Edge). The wire and the file are
+     setlist.js, the same as host/fm1_metronome and the firmware. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>METRONOME Setlist</title>
+<meta name="description" content="Edit an M-VAVE FM-1 METRONOME setlist in the browser, hear it, save it, send it to the device.">
+<style>
+  :root { --bg: #f6f6f3; --fg: #1b1b1f; --dim: #6b6b73; --card: #ffffff; --line: #dcdcd6; --accent: #b8860b;
+          --hi: #d99a00; --ok: #2f8f4e; --bad: #c0392b; --key: #fbfbf9; --keyfg: #1b1b1f; --lit: #f0c85a; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #111114; --fg: #ececf0; --dim: #9a9aa6; --card: #1b1b20; --line: #2c2c34;
+          --accent: #f0c85a; --hi: #f0c85a; --ok: #6bd18f; --bad: #f07a6c; --key: #23232a; --keyfg: #ececf0; --lit: #f0c85a; }
+  }
+  :root[data-theme="dark"] { --bg: #111114; --fg: #ececf0; --dim: #9a9aa6; --card: #1b1b20; --line: #2c2c34;
+          --accent: #f0c85a; --hi: #f0c85a; --ok: #6bd18f; --bad: #f07a6c; --key: #23232a; --keyfg: #ececf0; --lit: #f0c85a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 1.5rem; margin: 0 0 2px; }
+  h2 { font-size: 1rem; margin: 0 0 8px; }
+  p { margin: 6px 0; }
+  a { color: var(--accent); }
+  .lead, .dim { color: var(--dim); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 12px 0; }
+  button, select, input, label.button { font: inherit; color: inherit; }
+  button, label.button { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent); background: transparent;
+    color: var(--accent); cursor: pointer; margin: 3px 6px 3px 0; display: inline-block; }
+  button.primary { background: var(--accent); color: var(--bg); }
+  button:disabled { opacity: .4; cursor: default; }
+  select, input[type=number] { padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); }
+  input[type=file] { display: none; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+  #status { padding: 6px 10px; border-left: 3px solid var(--line); margin: 8px 0 0; font-size: .93em; }
+  #status.ok { border-color: var(--ok); } #status.bad { border-color: var(--bad); }
+  /* the 16 songs, as the white keys */
+  .keys { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+  .key { border: 1px solid var(--line); border-radius: 6px; padding: 6px 2px; text-align: center; background: var(--key);
+    color: var(--keyfg); cursor: pointer; min-height: 54px; position: relative; }
+  .key .n { font-size: .78em; color: var(--dim); }
+  .key .b { font-weight: 650; font-size: 1.05em; }
+  .key.empty .b { color: var(--dim); font-weight: 400; }
+  .key.used { border-color: var(--hi); }
+  .key.active { background: var(--lit); color: #1b1b1f; } .key.active .n { color: #4a3a00; }
+  .key.sel { outline: 2px solid var(--fg); outline-offset: 1px; }
+  .key .star { position: absolute; top: 2px; right: 5px; font-size: .7em; }
+  /* the song */
+  .tempo { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .bpm { font-size: 2.6rem; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 3ch; }
+  .mark { color: var(--hi); font-weight: 650; letter-spacing: .04em; }
+  input[type=range] { width: 100%; accent-color: var(--hi); }
+  .tabs button { margin-right: 0; border-radius: 0; } .tabs button:first-child { border-radius: 6px 0 0 6px; }
+  .tabs button:last-child { border-radius: 0 6px 6px 0; } .tabs button.on { background: var(--accent); color: var(--bg); }
+  .steps { display: grid; gap: 3px; margin: 10px 0 4px; }
+  .step { height: 64px; border-radius: 5px; border: 1px solid var(--line); background: var(--bg); cursor: pointer; position: relative;
+    padding: 0; display: flex; align-items: flex-end; justify-content: center; }
+  .step i { display: block; width: 100%; border-radius: 4px; background: var(--hi); }
+  .step.beat { border-left: 3px solid var(--dim); }
+  .step.now { box-shadow: 0 0 0 2px var(--ok) inset; }
+  .step span { position: absolute; top: 2px; font-size: .7em; color: var(--dim); }
+  .mix { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .mix label { display: block; text-align: center; font-size: .85em; color: var(--dim); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 700px) { .two { grid-template-columns: 1fr; } .keys { grid-template-columns: repeat(4, 1fr); } .bpm { font-size: 2.2rem; } }
+  .lamp { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: var(--line); vertical-align: middle; }
+  .lamp.n { background: var(--ok); } .lamp.a { background: var(--bad); }
+  kbd { font-family: ui-monospace, monospace; font-size: .9em; border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 4px; padding: 0 4px; background: var(--bg); }
+</style>
+</head>
+<body>
+<main>
+  <h1>METRONOME setlist</h1>
+  <p class="lead">Plan the 16 songs of an <a href="https://github.com/daviddwlee84/fm1-metronome">M-VAVE FM-1 running METRONOME</a>
+    here, hear them, save them as a file, and send them to the device. ·
+    <a href="cheatsheet.html">cheatsheet</a> · <a href="try/">try it in the browser</a></p>
+
+  <section>
+    <div class="row">
+      <button id="connect" class="primary">Connect the FM-1</button>
+      <button id="read" disabled>Read from the FM-1</button>
+      <button id="send" disabled>Send to the FM-1</button>
+      <span class="dim">|</span>
+      <button id="save">Save file</button>
+      <label class="button">Open file…<input type="file" id="open" accept=".json,application/json"></label>
+      <button id="clear">Clear all</button>
+    </div>
+    <div id="status">Editing here needs no FM-1. To read or send: METRONOME 0.3 or newer, a USB data cable, Chrome or
+      Edge (allow MIDI with SysEx when asked), and no other program holding its MIDI port.</div>
+  </section>
+
+  <section>
+    <div class="row" style="justify-content: space-between">
+      <h2>The setlist <span class="dim" style="font-weight:400">(a white key each; ★ the song it starts on)</span></h2>
+      <label class="dim">Switch songs while playing
+        <select id="switch"><option value="0">at the next bar</option><option value="1">at once</option></select></label>
+    </div>
+    <div class="keys" id="keys"></div>
+  </section>
+
+  <section id="song">
+    <div class="row" style="justify-content: space-between">
+      <h2 id="songTitle">Song 1</h2>
+      <div class="row">
+        <label><input type="checkbox" id="used"> stored</label>
+        <button id="star">★ Start on it</button>
+        <button id="play" class="primary">▶ Play</button>
+      </div>
+    </div>
+    <div class="tempo">
+      <span class="bpm" id="bpm">120</span><span class="dim">BPM</span><span class="mark" id="mark">ALLEGRO</span>
+      <span class="dim" id="meter">4/4 QUARTERS</span>
+      <span><span class="lamp" id="lamp"></span> <span class="dim" id="beatNo"></span></span>
+    </div>
+    <input type="range" id="bpmRange" min="30" max="300" step="1" aria-label="tempo">
+    <div class="row">
+      <button id="markDn" title="the previous tempo marking (K2 on SET)">◀ marking</button>
+      <button id="markUp" title="the next tempo marking">marking ▶</button>
+      <button id="dn5">−5</button><button id="dn1">−1</button><button id="up1">+1</button><button id="up5">+5</button>
+      <button id="tap" title="tap on the beat; the last four set the tempo">Tap</button>
+      <label class="dim">sound <select id="sound"><option value="0">CLICK</option><option value="1">WOOD</option><option value="2">BEEP</option></select></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div class="tabs"><button id="tabGrid">GRID</button><button id="tabClassic">CLASSIC</button></div>
+      <span class="dim" id="modeHint"></span>
+    </div>
+
+    <div id="grid">
+      <div class="row" style="margin-top:8px">
+        <label>meter (K3) <select id="preset"></select></label>
+        <label>beats (K1) <select id="beats"></select></label>
+        <label>a beat in (K2) <select id="div"><option value="1">quarters</option><option value="2">8ths</option>
+          <option value="3">triplets</option><option value="4">16ths</option></select></label>
+      </div>
+      <div class="steps" id="steps"></div>
+      <p class="dim">A step: off → ghost → normal → accent (click it, as a white key on the FM-1). The height is how loud.
+        In triplets the meter reads as 6/8, 9/8, 12/8 and the BPM is the dotted quarter's.</p>
+    </div>
+
+    <div id="classic" hidden>
+      <div class="row" style="margin-top:8px">
+        <label>accent every (OCT) <select id="accent"></select></label>
+      </div>
+      <div class="mix" id="mix"></div>
+      <p class="dim">The rhythm-watch way: the quarter on the beat, the other layers between the beats, each at its
+        own volume (K1–K4).</p>
+    </div>
+  </section>
+
+  <section class="two">
+    <div>
+      <h2>On the FM-1</h2>
+      <p class="dim"><b>SET</b> is the stage page: pick songs, change the tempo. <b>HOME</b> goes one level down to the
+        song's <b>GRID</b> (steps, beats, meter presets) or <b>CLASSIC</b> (four volumes, the accent). A setlist sent
+        from here waits on the FM-1's screen: <kbd>PLAY</kbd> loads it, <kbd>HOME</kbd> keeps what is there.
+        More in the <a href="cheatsheet.html">cheatsheet</a>.</p>
+    </div>
+    <div>
+      <h2>The file</h2>
+      <p class="dim">A plain JSON file (<code>"app": "METRONOME", "kind": "setlist"</code>): the stored songs by key,
+        each with its tempo, sound, GRID steps (<code>. g N A</code>) and CLASSIC mix. The same file works with the
+        command line (<code>python -m fm1_metronome backup / restore</code>). Plan on a phone, send from a computer.</p>
+    </div>
+  </section>
+  <p class="dim">METRONOME is free software (GPL-3.0-or-later), built on fm1-base. Not made by M-VAVE.</p>
+</main>
+<script src="setlist.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let S = MT.setlist(), cur = 0, dirty = false;
+const STORE = "fm1-metronome-setlist";
+try { const t = localStorage.getItem(STORE); if (t) S = MT.fromJSON(t); } catch (e) { /* a fresh setlist */ }
+const song = () => S.songs[cur];
+function status(t, cls) { $("status").textContent = t; $("status").className = cls || ""; }
+function keep() { try { localStorage.setItem(STORE, MT.toJSON(S)); } catch (e) { /* not kept */ } }
+function changed() { dirty = true; keep(); draw(); player.follow(); }
+
+// ------------------------------------------------------------------ drawing ---
+function fill(sel, items) { sel.innerHTML = items.map(([v, t]) => `<option value="${v}">${t}</option>`).join(""); }
+fill($("beats"), [1, 2, 3, 4, 5, 6, 7, 8, 9].map(b => [b, b]));
+fill($("accent"), [[0, "none"], ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(b => [b, b])]);
+fill($("preset"), [[-1, "—"], ...MT.PRESETS.map((p, i) => [i, p[0]])]);
+$("mix").innerHTML = ["1/4", "1/8", "TRIP", "1/16"].map((n, k) =>
+  `<div><input type="range" min="0" max="7" step="1" id="mix${k}" aria-label="${n}"><label>${n} <b id="mixv${k}"></b></label></div>`).join("");
+
+function draw() {
+  const g = song();
+  $("keys").innerHTML = S.songs.map((s, i) => `<div class="key ${s.used ? "used" : "empty"} ${i === S.active ? "active" : ""} ${i === cur ? "sel" : ""}" data-i="${i}">
+    ${i === S.active ? '<span class="star">★</span>' : ""}<div class="n">${i + 1}</div><div class="b">${s.used ? s.bpm : "–"}</div></div>`).join("");
+  $("songTitle").textContent = `Song ${cur + 1}` + (g.used ? "" : " (empty: set anything to store it)");
+  $("used").checked = g.used;
+  $("star").disabled = !g.used || cur === S.active;
+  $("bpm").textContent = g.bpm;
+  $("bpmRange").value = g.bpm;
+  $("mark").textContent = MT.MARKS[MT.marking(g.bpm)][0];
+  $("meter").textContent = MT.meterText(g);
+  $("sound").value = g.sound;
+  $("switch").value = S.switch_now ? 1 : 0;
+  $("tabGrid").className = g.mode === 0 ? "on" : ""; $("tabClassic").className = g.mode === 1 ? "on" : "";
+  $("grid").hidden = g.mode !== 0; $("classic").hidden = g.mode !== 1;
+  $("modeHint").textContent = g.mode === 0 ? "the bar's steps, as on the keys" : "four layers mixed, quick to set";
+  $("beats").value = g.beats; $("div").value = g.div; $("preset").value = MT.presetMatch(g);
+  [...$("div").options].forEach(o => { o.disabled = g.beats * o.value > MT.NSTEPS; });
+  const n = g.beats * g.div;
+  $("steps").style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+  $("steps").innerHTML = g.steps.slice(0, n).map((v, i) => `<button class="step ${i % g.div === 0 ? "beat" : ""}" data-i="${i}"
+    title="step ${i + 1}: ${["off", "ghost", "normal", "accent"][v]}"><span>${i + 1}</span><i style="height:${[0, 22, 50, 92][v]}%;opacity:${[0, .45, .75, 1][v]}"></i></button>`).join("");
+  $("accent").value = g.accent_every;
+  for (let k = 0; k < 4; k++) { $(`mix${k}`).value = g.mix[k]; $(`mixv${k}`).textContent = g.mix[k]; }
+  $("play").textContent = player.on ? "■ Stop" : "▶ Play";
+}
+
+// ----------------------------------------------------------------- editing ---
+function edit(f) { const g = song(); f(g); g.used = true; if (!S.songs[S.active].used) S.active = cur; changed(); }
+const bpm = v => edit(g => { g.bpm = Math.max(MT.BPM_MIN, Math.min(MT.BPM_MAX, Math.round(v))); });
+$("keys").onclick = e => { const k = e.target.closest(".key"); if (k) { cur = +k.dataset.i; draw(); player.follow(); } };
+$("used").onchange = () => {
+  const g = song();
+  if ($("used").checked) edit(() => {});
+  else if (S.songs.filter(s => s.used).length <= 1) { $("used").checked = true; status("The last song stays (the FM-1 keeps one).", "bad"); }
+  else { S.songs[cur] = MT.song(); if (S.active === cur) S.active = S.songs.findIndex(s => s.used); changed(); }
+  void g;
+};
+$("star").onclick = () => { S.active = cur; changed(); };
+$("bpmRange").oninput = e => bpm(+e.target.value);
+$("markUp").onclick = () => bpm(MT.markingJump(song().bpm, 1));
+$("markDn").onclick = () => bpm(MT.markingJump(song().bpm, -1));
+for (const [id, d] of [["dn5", -5], ["dn1", -1], ["up1", 1], ["up5", 5]]) $(id).onclick = () => bpm(song().bpm + d);
+let taps = [];
+$("tap").onclick = () => {
+  const t = performance.now();
+  if (taps.length && t - taps[taps.length - 1] > 2000) taps = [];
+  taps.push(t); taps = taps.slice(-4);
+  if (taps.length > 1) bpm(60000 * (taps.length - 1) / (taps[taps.length - 1] - taps[0]));
+};
+$("sound").onchange = e => edit(g => { g.sound = +e.target.value; });
+$("switch").onchange = e => { S.switch_now = e.target.value === "1"; changed(); };
+$("tabGrid").onclick = () => edit(g => { g.mode = 0; });
+$("tabClassic").onclick = () => edit(g => { g.mode = 1; });
+$("preset").onchange = e => { if (+e.target.value >= 0) edit(g => MT.presetApply(g, +e.target.value)); };
+$("beats").onchange = e => edit(g => { g.beats = +e.target.value; while (g.beats * g.div > MT.NSTEPS) g.div--; g.steps = MT.gridDefault(g.beats, g.div); });
+$("div").onchange = e => edit(g => { g.div = +e.target.value; g.steps = MT.gridDefault(g.beats, g.div); });
+$("steps").onclick = e => { const b = e.target.closest(".step"); if (b) edit(g => { g.steps[+b.dataset.i] = (g.steps[+b.dataset.i] + 1) % 4; }); };
+$("accent").onchange = e => edit(g => { g.accent_every = +e.target.value; });
+for (let k = 0; k < 4; k++) $(`mix${k}`).oninput = e => edit(g => { g.mix[k] = +e.target.value; });
+$("clear").onclick = () => { if (confirm("Clear the whole setlist? (one song at 120 BPM stays)")) { S = MT.setlist(); cur = 0; changed(); } };
+
+// ------------------------------------------------------------------- files ---
+const stamp = () => { const d = new Date(), p = v => String(v).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; };
+function download(text, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text + "\n"], { type: "application/json" }));
+  a.download = name; a.click();
+}
+$("save").onclick = () => { download(MT.toJSON(S), `fm1-metronome-setlist-${stamp()}.json`); dirty = false; status("Saved.", "ok"); };
+$("open").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  try { S = MT.fromJSON(await f.text()); cur = S.active; changed(); status(`Opened ${f.name}.`, "ok"); }
+  catch (err) { status(`Not opened: ${err.message}.`, "bad"); }
+};
+
+// --------------------------------------------------------- hearing it here ---
+// metro.c's ticks scheduled ahead on the audio clock (a beat is 12 ticks), app.c's sounds: a sine that decays.
+const player = {
+  on: false, ctx: null, t0: 0, next: 0, timer: 0, g: null, q: [],
+  start() {
+    this.ctx = this.ctx || new (window.AudioContext || window.webkitAudioContext)();
+    this.ctx.resume();
+    this.g = JSON.parse(JSON.stringify(song()));
+    this.on = true; this.next = 0; this.t0 = this.ctx.currentTime + 0.08; this.q = [];
+    this.timer = setInterval(() => this.pump(), 25); this.pump(); draw(); requestAnimationFrame(() => this.anim());
+  },
+  stop() { this.on = false; clearInterval(this.timer); draw(); $("lamp").className = "lamp"; $("beatNo").textContent = ""; },
+  tick() { return 60 / this.g.bpm / 12; },
+  follow() {   // an edit: from the next tick, the count going on (as on the FM-1)
+    if (!this.on) return;
+    const now = this.ctx.currentTime, t = this.tick(), at = this.t0 + this.next * t;
+    this.g = JSON.parse(JSON.stringify(song()));
+    this.t0 = at - this.next * this.tick();
+    void now;
+  },
+  pump() {
+    const ahead = this.ctx.currentTime + 0.12;
+    while (this.t0 + this.next * this.tick() < ahead) {
+      const when = this.t0 + this.next * this.tick(), snd = MT.SND[this.g.sound];
+      for (const [v, vol] of MT.hits(this.g, this.next)) {
+        const o = this.ctx.createOscillator(), a = this.ctx.createGain();
+        o.frequency.value = snd.hz[v];
+        a.gain.setValueAtTime(MT.V_AMP[v] * vol / 7 * 0.6, when);
+        a.gain.exponentialRampToValueAtTime(0.0001, when + snd.tau / 1000 * 7);
+        o.connect(a).connect(this.ctx.destination); o.start(when); o.stop(when + snd.tau / 1000 * 7 + 0.02);
+      }
+      this.q.push([when, this.next]);
+      this.next++;
+    }
+  },
+  anim() {
+    if (!this.on) return;
+    const now = this.ctx.currentTime;
+    while (this.q.length > 1 && this.q[1][0] <= now) this.q.shift();
+    const tk = this.q.length && this.q[0][0] <= now ? this.q[0][1] : -1, g = this.g;
+    if (tk >= 0) {
+      const bar = MT.barTicks(g), beat = Math.floor((tk % bar) / 12), fresh = tk % 12 < 3;
+      const acc = g.mode === 0 ? g.steps[beat * g.div] === 3 : g.accent_every && beat === 0;
+      $("lamp").className = "lamp" + (fresh ? (acc ? " a" : " n") : "");
+      $("beatNo").textContent = `beat ${beat + 1}`;
+      document.querySelectorAll(".step").forEach(b => b.classList.toggle("now",
+        g.mode === 0 && +b.dataset.i === Math.floor(tk / (12 / g.div)) % (g.beats * g.div)));
+    }
+    requestAnimationFrame(() => this.anim());
+  },
+};
+$("play").onclick = () => (player.on ? player.stop() : player.start());
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.code === "Space") { e.preventDefault(); player.on ? player.stop() : player.start(); }
+});
+
+// ---------------------------------------------------------------- the FM-1 ---
+let out = null, inp = null, firmware = "", asm = null, onDone = null;
+function send(f) { out.send(f); }
+function onMessage(e) {
+  let m;
+  try { m = MT.parse(Array.from(e.data)); } catch (err) { status(err.message, "bad"); return; }
+  if (!m) return;
+  if (m.type === MT.T.HELLO || m.type === MT.T.HEARTBEAT) {
+    if (m.type === MT.T.HELLO && m.payload.length >= 3) firmware = `${m.payload[1]}.${m.payload[2]}`;
+    send(MT.helloAck());
+    if (!$("read").disabled) return;
+    $("read").disabled = $("send").disabled = false;
+    status(`Connected: METRONOME ${firmware} on "${inp.name}".`, "ok");
+  } else if (m.type === MT.T.SET && asm) {
+    try { const s = asm.a.feed(m.payload); if (s) asm.done(s); } catch (err) { asm.fail(err.message); }
+  } else if (m.type === MT.T.SET_DONE && onDone) onDone(m.payload[0]);
+}
+function hunt(access) {   // the port that speaks METRONOME (macOS may still call it "Felucca" after an earlier firmware)
+  const ins = [...access.inputs.values()];
+  if (!ins.length) { status("No MIDI inputs. Connect the FM-1 by a USB data cable.", "bad"); return; }
+  let found = false;
+  for (const i of ins) {
+    i.onmidimessage = e => {
+      let m = null;
+      try { m = MT.parse(Array.from(e.data)); } catch (err) { /* another version */ }
+      if (found || !m) return;
+      found = true; inp = i;
+      out = [...access.outputs.values()].find(o => o.name === i.name && o.manufacturer === i.manufacturer)
+        || [...access.outputs.values()].find(o => o.name === i.name);
+      for (const j of ins) if (j !== i) j.onmidimessage = null;
+      i.onmidimessage = onMessage;
+      onMessage(e);
+    };
+  }
+  status("Listening for METRONOME on " + ins.map(i => `"${i.name}"`).join(", ") + "…");
+  setTimeout(() => { if (!found) status("No FM-1 running METRONOME 0.3 or newer heard. Is it on, on USB, and is no other program (a DAW, M-Flasher, another tab) holding its port?", "bad"); }, 3000);
+}
+$("connect").onclick = () => {
+  if (!navigator.requestMIDIAccess) { status("This browser has no Web MIDI (Safari, and every browser on iPhone and iPad). Use Chrome or Edge on a computer to read or send; editing and files work here.", "bad"); return; }
+  navigator.requestMIDIAccess({ sysex: true }).then(a => { hunt(a); a.onstatechange = () => { if (!inp) hunt(a); }; },
+    () => status("MIDI access was refused (SysEx must be allowed for this page).", "bad"));
+};
+$("read").onclick = () => {
+  if (dirty && !confirm("Replace the setlist here with the FM-1's? (Save it first if you want to keep it.)")) return;
+  const timer = setTimeout(() => asm && asm.fail("no answer"), 5000);
+  asm = { a: MT.assembler(),
+    fail(msg) { clearTimeout(timer); asm = null; status(`Not read: ${msg}.`, "bad"); },
+    done(s) { clearTimeout(timer); asm = null; S = s; cur = S.active; dirty = false; keep(); draw(); status(`Read ${S.songs.filter(x => x.used).length} songs from the FM-1.`, "ok"); } };
+  send(MT.frame(MT.T.SET_REQ));
+};
+$("send").onclick = async () => {
+  try {
+    const fr = MT.frames(S);
+    for (const f of fr) { send(f); await new Promise(r => setTimeout(r, 30)); }   // the FM-1 takes one frame at a time
+    status("Sent. On the FM-1: PLAY loads it, HOME keeps what is there.");
+    onDone = a => { onDone = null; if (a === 0) dirty = false; status(["Loaded on the FM-1.", "Declined on the FM-1.", "Refused: the FM-1 found it damaged."][a] || `Answer ${a}.`, a === 0 ? "ok" : "bad"); };
+  } catch (err) { status(`Not sent: ${err.message}.`, "bad"); }
+};
+draw();
+</script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+{
+  "app": "METRONOME",
+  "kind": "setlist",
+  "format": 1,
+  "firmware": "0.3",
+  "active": 5,
+  "switch": "now",
+  "page": "set",
+  "songs": [
+    {
+      "key": 1,
+      "bpm": 96,
+      "mode": "grid",
+      "sound": "wood",
+      "grid": {
+        "beats": 3,
+        "div": 2,
+        "steps": "AgNgNg"
+      },
+      "classic": {
+        "accent_every": 4,
+        "quarter": 7,
+        "eighth": 0,
+        "triplet": 0,
+        "sixteenth": 0
+      }
+    },
+    {
+      "key": 5,
+      "bpm": 150,
+      "mode": "classic",
+      "sound": "click",
+      "grid": {
+        "beats": 4,
+        "div": 1,
+        "steps": "ANNN"
+      },
+      "classic": {
+        "accent_every": 3,
+        "quarter": 7,
+        "eighth": 4,
+        "triplet": 0,
+        "sixteenth": 2
+      }
+    },
+    {
+      "key": 10,
+      "bpm": 200,
+      "mode": "grid",
+      "sound": "beep",
+      "grid": {
+        "beats": 7,
+        "div": 1,
+        "steps": "AgNgNgg"
+      },
+      "classic": {
+        "accent_every": 4,
+        "quarter": 7,
+        "eighth": 0,
+        "triplet": 0,
+        "sixteenth": 0
+      }
+    }
+  ]
+}

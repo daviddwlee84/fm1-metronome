@@ -1,0 +1,155 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- METRONOME for the M-VAVE FM-1: every page and control on one sheet, printable. The Traditional Chinese design
+     notes are docs/dev/metronome.md in github.com/daviddwlee84/M-VAVE_FM-1; keep the two in step. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>METRONOME Cheatsheet</title>
+<style>
+  :root { --bg: #f6f6f3; --fg: #1b1b1f; --dim: #6b6b73; --card: #ffffff; --line: #dcdcd6; --accent: #b8860b; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #111114; --fg: #ececf0; --dim: #9a9aa6; --card: #1b1b20; --line: #2c2c34; --accent: #f0c85a; }
+  }
+  :root[data-theme="dark"] { --bg: #111114; --fg: #ececf0; --dim: #9a9aa6; --card: #1b1b20; --line: #2c2c34; --accent: #f0c85a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, sans-serif; }
+  main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  p.lead { color: var(--dim); margin: 0 0 16px; }
+  a { color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 12px; align-items: start; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; break-inside: avoid; }
+  section.wide { grid-column: 1 / -1; }
+  h2 { font-size: 1rem; margin: 0 0 6px; letter-spacing: .02em; }
+  table { border-collapse: collapse; width: 100%; font-size: .93em; }
+  td, th { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; }
+  td:first-child { white-space: nowrap; }
+  code, kbd { font-family: ui-monospace, monospace; font-size: .92em; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--bg); white-space: nowrap; }
+  p { margin: 6px 0; }
+  .dim { color: var(--dim); }
+  .flow { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px 10px; align-items: center; }
+  .flow .box { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .flow .box b.t { display: block; }
+  .flow .arrow { color: var(--dim); text-align: center; }
+  @media (max-width: 640px) { .flow { grid-template-columns: 1fr; } .flow .arrow { transform: rotate(90deg); } }
+  @media print {
+    :root { --bg: #fff; --fg: #000; --dim: #444; --card: #fff; --line: #bbb; --accent: #000; }
+    body { font-size: 9.5pt; }
+    main { max-width: none; padding: 0; }
+    .noprint { display: none; }
+    .grid { grid-template-columns: 1fr 1fr; gap: 6px; }
+    section { padding: 6px 8px; border-radius: 4px; }
+    a { text-decoration: none; }
+    @page { size: A4; margin: 10mm; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>METRONOME cheatsheet</h1>
+  <p class="lead">Firmware 0.3, every page and control. A stage metronome: 16 songs on the white keys.
+    <span class="noprint"><a href="./">setlist editor</a> · <a href="try/">try it in the browser</a> ·
+    <a href="https://github.com/daviddwlee84/fm1-metronome">source and install</a> ·
+    <a href="javascript:print()">print</a></span></p>
+
+  <div class="grid">
+    <section class="wide">
+      <h2>How it is laid out</h2>
+      <div class="flow">
+        <div class="box"><b class="t">SET: the stage</b>Pick songs, see and change the tempo. Little else to touch, so little to
+          get wrong mid-song.</div>
+        <div class="arrow"><kbd>HOME</kbd> ⇄</div>
+        <div class="box"><b class="t">The song's own page</b>Each song is one of two kinds (<kbd>SEL</kbd> switches):
+          <b>GRID</b>, detailed: every step of the bar, beats, meter presets;
+          <b>CLASSIC</b>, quick: four volumes and an accent, enough for practice without ever leaving it.</div>
+      </div>
+      <p class="dim">Settings save themselves 3 s after the last change. After a show: <kbd>REC</kbd>, hold
+        <kbd>SEL</kbd> 2 s, <kbd>PLAY</kbd> clears the set for the next one.</p>
+    </section>
+
+    <section>
+      <h2>Everywhere</h2>
+      <table>
+        <tr><td><kbd>PLAY</kbd></td><td>start / stop</td></tr>
+        <tr><td><kbd>HOME</kbd></td><td>SET ⇄ the song's GRID or CLASSIC page</td></tr>
+        <tr><td><kbd>SELECT</kbd></td><td>tempo ±1 (30–300); turned fast, ±5 a click</td></tr>
+        <tr><td><kbd>ALGO</kbd></td><td>sound: CLICK, WOOD, BEEP</td></tr>
+        <tr><td>black keys</td><td>tap tempo (the last four taps); they flash with the beat. On SET while playing
+          they do nothing (a stray touch on stage): tap in EDIT</td></tr>
+        <tr><td><kbd>MASTER</kbd></td><td>volume</td></tr>
+      </table>
+      <p class="dim">The tempo's marking shows beside the BPM: LARGHISSIMO &lt;40, LARGO 40, LARGHETTO 60, ADAGIO 66,
+        ANDANTE 76, MODERATO 108, ALLEGRO 120, PRESTO 168, PRESTISSIMO 200 (the metronome's scale).</p>
+    </section>
+
+    <section>
+      <h2>SET: the setlist</h2>
+      <table>
+        <tr><td>white key</td><td>play that song; while playing it starts at the next bar (the key blinks until then)</td></tr>
+        <tr><td><kbd>OCT-</kbd> <kbd>OCT+</kbd></td><td>tempo ±5</td></tr>
+        <tr><td><kbd>K1</kbd></td><td>switch songs at the NEXT BAR or NOW</td></tr>
+        <tr><td><kbd>K2</kbd></td><td>jump to the next tempo marking: 35, 50, 63, 70, 92, 112, 132, 184, 208</td></tr>
+        <tr><td><kbd>REC</kbd></td><td>EDIT on / off</td></tr>
+      </table>
+      <p class="dim">Stored songs' keys glow, the playing one is lit. The screen: tempo, marking, meter, a pendulum,
+        and the 16 songs with their tempos.</p>
+    </section>
+
+    <section>
+      <h2>SET: EDIT</h2>
+      <table>
+        <tr><td>white key</td><td>pick it (an empty one starts as a copy of the song on); press it again on the beat
+          to tap its tempo</td></tr>
+        <tr><td><kbd>SELECT</kbd>, <kbd>OCT±</kbd></td><td>its tempo exactly</td></tr>
+        <tr><td><kbd>SEL</kbd> + white key</td><td>clear that song (the last one stays)</td></tr>
+        <tr><td><kbd>SEL</kbd> held 2 s</td><td><code>CLEAR ALL?</code> <kbd>PLAY</kbd> clears every song (one at 120,
+          4/4 stays); any other button, or 5 s, keeps them</td></tr>
+        <tr><td><kbd>REC</kbd></td><td>leave EDIT</td></tr>
+      </table>
+    </section>
+
+    <section>
+      <h2>GRID: detailed</h2>
+      <table>
+        <tr><td>white key</td><td>a step of the bar: off → ghost → normal → accent. The key is as bright as it sounds</td></tr>
+        <tr><td><kbd>K1</kbd></td><td>beats a bar, 1–9</td></tr>
+        <tr><td><kbd>K2</kbd></td><td>a beat in quarters, 8ths, triplets, 16ths (16 steps at most)</td></tr>
+        <tr><td><kbd>K3</kbd></td><td>meter presets: 2/4 3/4 4/4 5/4, 6/8, 6/8 IN 6, 9/8, 12/8, 5/8 3+2, 7/8 2+2+3</td></tr>
+        <tr><td><kbd>OCT±</kbd></td><td>tempo ±5</td></tr>
+        <tr><td><kbd>REC</kbd></td><td>tap tempo</td></tr>
+        <tr><td><kbd>SEL</kbd></td><td>this song becomes CLASSIC</td></tr>
+      </table>
+      <p class="dim">K1 and K2 reset the pattern (accent on 1, normal beats, ghosts between). In triplets the meter
+        reads 6/8, 9/8, 12/8 and the <b>BPM is the dotted quarter's</b> (eighth = 120 is 40 here). 6/8 IN 6, 5/8 and
+        7/8 count the eighth.</p>
+    </section>
+
+    <section>
+      <h2>CLASSIC: quick</h2>
+      <table>
+        <tr><td><kbd>K1</kbd>–<kbd>K4</kbd></td><td>volume 0–7 of the quarter, eighth, triplet and sixteenth layers, mixed</td></tr>
+        <tr><td><kbd>OCT-</kbd> <kbd>OCT+</kbd></td><td>BEAT: an accent every 1–9 beats, 0 none</td></tr>
+        <tr><td>any key, <kbd>REC</kbd></td><td>tap tempo</td></tr>
+        <tr><td><kbd>SEL</kbd></td><td>this song becomes GRID</td></tr>
+      </table>
+      <p class="dim">The rhythm-watch way. Lamps: red on the accent, green on the other beats.</p>
+    </section>
+
+    <section>
+      <h2>With a computer</h2>
+      <table>
+        <tr><td><a href="./">setlist editor</a></td><td>edit the 16 songs, hear them, save a file; read from or send to
+          the FM-1 (USB, Chrome or Edge)</td></tr>
+        <tr><td>a setlist arrives</td><td>the screen asks <code>LOAD THIS SETLIST?</code> <kbd>PLAY</kbd> yes,
+          <kbd>HOME</kbd> no</td></tr>
+        <tr><td>command line</td><td><code>python -m fm1_metronome backup FILE</code> / <code>restore FILE</code></td></tr>
+      </table>
+    </section>
+  </div>
+</main>
+</body>
+</html>

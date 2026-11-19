@@ -1,0 +1,13 @@
+{
+  "what": "A stage metronome: 16 songs on the white keys, each with its own tempo, meter, step pattern and sound, switched at the next bar. Tempo markings, meter presets up to 7/8, a rhythm-watch mix page, tap tempo. A web page plans the setlist and sends it over USB.",
+  "author": "Da-Wei Lee",
+  "kinds": [
+    "other"
+  ],
+  "play": "https://daviddwlee84.github.io/fm1-metronome/web/try/",
+  "editor": "https://daviddwlee84.github.io/fm1-metronome/web/",
+  "cheat": "https://daviddwlee84.github.io/fm1-metronome/web/cheatsheet.html",
+  "image": "docs/screen.png",
+  "color": "#F0C85A",
+  "sounds": "none"
+}

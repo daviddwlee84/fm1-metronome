@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* METRONOME v0.2: SET, GRID and CLASSIC (see app.h). What sounds when is metro.c.
+/* METRONOME v0.3: SET, GRID and CLASSIC (see app.h); the setlist to and from a computer over USB. What sounds when
+ * is metro.c.
  *
  * Time: the audio's sample count is the clock, as in RHYTHM. The render plays every click on its exact sample (a
  * tick is a twelfth of a beat), not on the next block. A change while playing (another song, a new tempo, a step)
@@ -10,9 +11,10 @@
 #include "fastmath.h"
 #include "metro.c"
 #include "ledfx.c"
+#include "hostlink.c"
 
 #define FW_MAJOR 0
-#define FW_MINOR 2
+#define FW_MINOR 3
 #define SR 44100u
 
 /* ---------------------------------------------------------------- settings --- */
@@ -235,6 +237,7 @@ static struct {
     uint32_t confirm_until;              /* CLEAR ALL? waits for PLAY until then (0: not asking) */
     uint32_t sel_turn_at;                /* SELECT: the last detent, for its acceleration */
     uint32_t locked;                     /* SET: black-key taps ignored while playing (checks) */
+    uint8_t ask;                         /* a setlist from the computer waits for PLAY (yes) or HOME (no) */
 } ui;
 static int host_fails;
 
@@ -520,6 +523,199 @@ static void edited(uint32_t r)           /* the active song changed: play it so,
     changed(r);
 }
 
+/* ------------------------------------------------- the setlist over USB --- */
+/* The setlist to a file and back, as THEORY's progress backup does it (host/ and web/ in this firmware's repository):
+ *   F0 7D 4D 54 <ver=1> <type> <payload...> F7   ("MT"; every payload byte 7-bit)
+ * device -> host: HELLO 41 (proto, fw major, fw minor, transport), HEARTBEAT 42 (proto, transport),
+ *                 SET 44 (index, count, chunk 7-bit packed), SET_DONE 45 (0 loaded, 1 declined, 2 refused)
+ * host -> device: HELLO_ACK 01, SET_REQ 04, SET_LOAD 05 (as SET)
+ * 46 / 06 are kept for a live link (the transport's state, so a page can play along: docs/dev/metronome.md).
+ * The record: a format byte, the active song, the switch, the page, 16 songs of 28 bytes field by field, a
+ * CRC-16/CCITT-FALSE (low byte first). A setlist that comes in waits on the screen for PLAY. */
+enum { T_HELLO_ACK = 0x01, T_SET_REQ = 0x04, T_SET_LOAD = 0x05,
+       T_HELLO = 0x41, T_HEARTBEAT = 0x42, T_SET = 0x44, T_SET_DONE = 0x45 };
+enum { SD_LOADED, SD_DECLINED, SD_BAD };
+#define MT_PROTO 1u
+#define SL_FORMAT 1u
+#define SL_SONG 28u
+#define SL_N (1u + 3u + MT_NSLOT * SL_SONG + 2u)
+#define SL_CHUNK 49u
+#define SL_FRAMES ((SL_N + SL_CHUNK - 1u) / SL_CHUNK)
+
+static hostlink_t link;
+static struct {
+    uint8_t tx_on, tx_i, rx_next;
+    uint8_t buf[SL_FRAMES * SL_CHUNK];
+    rec_t in;                            /* a setlist waiting for PLAY */
+    uint32_t loads;                      /* setlists loaded (checks) */
+} xfer;
+
+static uint16_t crc16(const uint8_t *p, uint32_t n)   /* CRC-16/CCITT-FALSE */
+{
+    uint16_t c = 0xFFFFu;
+    uint32_t k;
+    while (n--) {
+        c ^= (uint16_t)(*p++ << 8);
+        for (k = 0; k < 8u; k++) c = (uint16_t)(c & 0x8000u ? (c << 1) ^ 0x1021u : c << 1);
+    }
+    return c;
+}
+
+static void sl_fill(const rec_t *r, uint8_t *b)       /* SL_N bytes */
+{
+    uint32_t i, j;
+    uint16_t c;
+    b[0] = SL_FORMAT;
+    b[1] = r->active;
+    b[2] = r->swap_now;
+    b[3] = r->page;
+    for (i = 0; i < MT_NSLOT; i++) {
+        const mt_slot_t *s = &r->slot[i];
+        uint8_t *d = b + 4u + i * SL_SONG;
+        d[0] = s->used;
+        d[1] = s->mode;
+        d[2] = (uint8_t)s->bpm;
+        d[3] = (uint8_t)(s->bpm >> 8);
+        d[4] = s->bpb;
+        d[5] = s->div;
+        d[6] = s->beat;
+        d[7] = s->sound;
+        for (j = 0; j < MT_NLAYER; j++) d[8 + j] = s->mix[j];
+        for (j = 0; j < MT_STEPS; j++) d[12 + j] = s->steps[j];
+    }
+    c = crc16(b, SL_N - 2u);
+    b[SL_N - 2u] = (uint8_t)c;
+    b[SL_N - 1u] = (uint8_t)(c >> 8);
+}
+
+static int sl_read(rec_t *r, const uint8_t *b)        /* 1: a setlist this firmware can play */
+{
+    uint32_t i, j;
+    uint16_t c = crc16(b, SL_N - 2u);
+    if (b[0] != SL_FORMAT || b[SL_N - 2u] != (uint8_t)c || b[SL_N - 1u] != (uint8_t)(c >> 8)) return 0;
+    zero(r, sizeof *r);
+    r->active = b[1];
+    r->swap_now = b[2];
+    r->page = b[3];
+    for (i = 0; i < MT_NSLOT; i++) {
+        mt_slot_t *s = &r->slot[i];
+        const uint8_t *d = b + 4u + i * SL_SONG;
+        s->used = d[0];
+        s->mode = d[1];
+        s->bpm = (uint16_t)(d[2] | d[3] << 8);
+        s->bpb = d[4];
+        s->div = d[5];
+        s->beat = d[6];
+        s->sound = d[7];
+        for (j = 0; j < MT_NLAYER; j++) s->mix[j] = d[8 + j];
+        for (j = 0; j < MT_STEPS; j++) s->steps[j] = d[12 + j];
+    }
+    r->magic = REC_MAGIC;
+    r->ver = REC_VER;
+    r->size = (uint16_t)sizeof *r;
+    return rec_valid(r);
+}
+
+static uint32_t pack7(const uint8_t *in, uint32_t n, uint8_t *out)   /* each 7 bytes: their high bits, then them */
+{
+    uint32_t i, j, k = 0;
+    for (i = 0; i < n; i += 7u) {
+        uint32_t m = n - i < 7u ? n - i : 7u;
+        uint8_t hi = 0;
+        for (j = 0; j < m; j++) hi |= (uint8_t)((in[i + j] >> 7) << j);
+        out[k++] = hi;
+        for (j = 0; j < m; j++) out[k++] = in[i + j] & 0x7Fu;
+    }
+    return k;
+}
+
+static uint32_t unpack7(const uint8_t *in, uint32_t n, uint8_t *out, uint32_t max)
+{
+    uint32_t i = 0, j, k = 0;
+    while (i < n) {
+        uint8_t hi = in[i++];
+        for (j = 0; j < 7u && i < n && k < max; j++) out[k++] = (uint8_t)(in[i++] | ((hi >> j) & 1u) << 7);
+    }
+    return k;
+}
+
+static void sl_done(int answer)
+{
+    uint8_t a = (uint8_t)answer;
+    hl_send(&link, T_SET_DONE, &a, 1);
+}
+
+static void sl_pump(void)                /* the setlist out, a frame a main-loop pass */
+{
+    uint8_t b[SL_N], f[2u + SL_CHUNK + SL_CHUNK / 7u + 1u];
+    uint32_t off, m, k;
+    if (!xfer.tx_on) return;
+    sl_fill(&rec, b);
+    off = xfer.tx_i * SL_CHUNK;
+    m = SL_N - off < SL_CHUNK ? SL_N - off : SL_CHUNK;
+    f[0] = xfer.tx_i;
+    f[1] = (uint8_t)SL_FRAMES;
+    k = 2u + pack7(b + off, m, f + 2);
+    if (hl_send(&link, T_SET, f, k) == 0 && ++xfer.tx_i >= SL_FRAMES) xfer.tx_on = 0;
+}
+
+static void sl_in(const uint8_t *d, uint32_t len)     /* a chunk of a setlist to load */
+{
+    uint32_t off;
+    if (len < 3u || d[1] != SL_FRAMES || d[0] >= SL_FRAMES) { sl_done(SD_BAD); return; }
+    if (d[0] == 0u) xfer.rx_next = 0;
+    if (d[0] != xfer.rx_next) { xfer.rx_next = 0; sl_done(SD_BAD); return; }
+    off = d[0] * SL_CHUNK;
+    (void)unpack7(d + 2, len - 2u, xfer.buf + off, SL_N - off < SL_CHUNK ? SL_N - off : SL_CHUNK);
+    if (++xfer.rx_next < SL_FRAMES) return;
+    xfer.rx_next = 0;
+    if (ui.ask) { sl_done(SD_DECLINED); return; }
+    if (!sl_read(&xfer.in, xfer.buf)) {
+        sl_done(SD_BAD);
+        app_say("SETLIST REFUSED", "IT DOES NOT CHECK OUT");
+        return;
+    }
+    ui.ask = 1;
+    ui.confirm_until = 0;
+    app_say("LOAD SETLIST?", "PLAY = YES");
+    ui.redraw |= R_ALL;
+}
+
+static void ask_answer(int yes)
+{
+    if (!ui.ask) return;
+    ui.ask = 0;
+    if (yes) {
+        if (ui.running) tr_stop();
+        rec = xfer.in;
+        ui.edit = 0;
+        tap_reset();
+        rec_save();
+        xfer.loads++;
+        sl_done(SD_LOADED);
+        app_say("SETLIST", "LOADED");
+    } else {
+        sl_done(SD_DECLINED);
+        app_say("SETLIST", "NOT LOADED");
+    }
+    ui.redraw |= R_ALL;
+}
+
+static int host_frame(const uint8_t *p, uint32_t n)
+{
+    uint8_t type;
+    uint32_t len;
+    const uint8_t *d = hl_match(&link, p, n, &type, &len);
+    if (!d) return 0;
+    hl_seen(&link, plat_ms());
+    if (type == T_HELLO_ACK) hl_acked(&link, plat_ms(), HL_USB);
+    else if (type == T_SET_REQ) { xfer.tx_on = 1; xfer.tx_i = 0; }
+    else if (type == T_SET_LOAD) sl_in(d, len);
+    return 1;
+}
+
+int app_sysex(const uint8_t *p, uint32_t n) { return host_frame(p, n); }
+
 /* ----------------------------------------------------------------- input --- */
 static void set_page(int p)
 {
@@ -635,6 +831,10 @@ static void input(void)
     for (k = 0; k < NB; k++) {
         uint32_t bit = 1u << k;
         if (!(btn & bit) || (ui.btn & bit)) continue;
+        if (ui.ask) {                    /* LOAD THIS SETLIST? PLAY yes, HOME no, the rest waits */
+            if (k == B_PLAY || k == B_HOME) ask_answer(k == B_PLAY);
+            continue;
+        }
         if (ui.confirm_until) {          /* the answer: PLAY clears, anything else keeps them */
             ui.confirm_until = 0;
             if (k == B_PLAY) clear_all();
@@ -734,6 +934,7 @@ static void input(void)
     while (kq_r != kq_w) {               /* the presses the tick dated */
         uint32_t key = kq_key[kq_r % KQ], ms = kq_ms[kq_r % KQ];
         kq_r++;
+        if (ui.ask) continue;
         if (ui.confirm_until) {
             ui.confirm_until = 0;
             app_say("CLEAR ALL", "CANCELLED");
@@ -963,7 +1164,21 @@ static void draw_mix(int32_t oy)         /* CLASSIC's bottom: the four layers' v
 static void draw_band(int which)         /* the main area's halves: 0 the top (it moves), 1 the bottom */
 {
     cv_begin(240, BAND, C_BLACK);
-    if (!which) {
+    if (ui.ask) {                        /* a setlist from the computer */
+        uint32_t i, n = 0;
+        char t[24];
+        for (i = 0; i < MT_NSLOT; i++) n += xfer.in.slot[i].used;
+        if (!which) {
+            cv_text(16, 20, &FONT_B, "LOAD THIS SETLIST?", C_WHITE);
+            t[0] = 0;
+            tint(t, (int)n);
+            tcat(t, n == 1 ? " SONG" : " SONGS");
+            cv_text(16, 50, &FONT_B, t, C_HI);
+        } else {
+            cv_text(16, 8, &FONT_T, "IT REPLACES THE SONGS HERE", C_GRAY);
+            cv_text(16, 40, &FONT_B, "PLAY: YES   HOME: NO", C_HI);
+        }
+    } else if (!which) {
         if (rec.page == PG_PAT && CUR->mode == MT_CLASSIC) draw_classic_top(0);
         else draw_tempo_left(0);
     } else if (rec.page == PG_SET)
@@ -979,7 +1194,9 @@ static void draw_footer(void)
 {
     cv_begin(240, 32, C_BLACK);
     cv_rect(0, 0, 240, 1, C_LINE);
-    if (ui.confirm_until)
+    if (ui.ask)
+        cv_text(8, 7, &FONT_B, "FROM THE COMPUTER", C_RED);
+    else if (ui.confirm_until)
         cv_text(8, 7, &FONT_B, "CLEAR ALL?  PLAY = YES", C_RED);
     else if (plat_ms() < ui.toast_until) {
         int32_t x = cv_text(8, 10, &FONT_T, ui.toast[0], C_GRAY);
@@ -1032,6 +1249,8 @@ void app_init(void)
     dirty_at = 0;
     ui.pend = -1;
     kq_r = kq_w;
+    zero(&xfer, sizeof xfer);
+    hl_init(&link, 0x4D, 0x54, MT_PROTO);   /* "MT" */
     if (plat_store_load(OBJ_METRO, &rec, sizeof rec) != (int)sizeof rec || !rec_valid(&rec)) {
         zero(&rec, sizeof rec);
         defaults();
@@ -1070,6 +1289,11 @@ void app_frame(void)
         ui.redraw |= R_FOOT;
     }
     if (dirty_at && (int32_t)(now - dirty_at) > 3000) rec_save();
+    {
+        static const uint8_t HELLO[3] = { MT_PROTO, FW_MAJOR, FW_MINOR };
+        hl_tick(&link, now, T_HELLO, T_HEARTBEAT, HELLO, 3);
+        sl_pump();
+    }
     lights(now);
     speak();
     ann_tick(now);
@@ -1113,6 +1337,8 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "saves")) *got = (int)saves;
     else if (!strcmp(what, "marking")) *got = mt_marking(CUR->bpm);
     else if (!strcmp(what, "preset")) *got = mt_preset_match(CUR);
+    else if (!strcmp(what, "ask")) *got = ui.ask;
+    else if (!strcmp(what, "loads")) *got = (int)xfer.loads;
     else if (!strcmp(what, "locked")) *got = (int)ui.locked;
     else if (!strcmp(what, "confirm")) *got = ui.confirm_until != 0;
     else return 0;

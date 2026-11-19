@@ -1,11 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* METRONOME: the FM-1 as a stage metronome (design: docs/dev/metronome.md in github.com/daviddwlee84/M-VAVE_FM-1).
+/* METRONOME: the FM-1 as a stage metronome (github.com/daviddwlee84/fm1-metronome; design notes: docs/dev/metronome.md in github.com/daviddwlee84/M-VAVE_FM-1).
  * v0.1: SET, a setlist of 16 presets on the white keys (a song's tempo, meter, pattern and sound; the stored keys
  * glow, the one playing is lit; switch songs at the next bar). GRID, the bar's steps on the white keys, each off,
  * ghost, normal or accent, which is how bright its key is. CLASSIC, a rhythm-watch layout: the quarter, eighth,
  * triplet and sixteenth layers mixed on K1-K4, the accent every BEAT beats. Tap tempo on the black keys.
  * The timing and the patterns are metro.c (platform-free). Built on fm1-base (MPL-2.0, its headers). This app is
- * GPL-3.0-or-later; ../common (ledfx) is MIT. */
+ * GPL-3.0-or-later; common/ (ledfx, hostlink) is MIT.
+ * v0.3: the setlist to a JSON file and back over USB (SysEx "MT", app.c), with a web editor. */
 #pragma once
 #include <stdint.h>
 #include "plat.h"
@@ -30,6 +31,9 @@ void app_frame(void);
 void app_input_only(void);
 void app_say(const char *a, const char *b);
 void app_tick(void);
+
+#define APP_SYSEX                        /* the setlist's frames from the computer (host/, web/) */
+int app_sysex(const uint8_t *p, uint32_t n);
 
 /* host simulator: checks (page, active, bpm, used, step3, n_accent, ...) */
 #define APP_HOST_EXPECT

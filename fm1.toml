@@ -1,18 +1,20 @@
 # METRONOME's build settings (fm1-base tools/build.py)
 name = "METRONOME"
 title = "METRONOME"
-id_prefix = "FM-1_59"          # package identity: dev FM-1_5900, release 0.1 FM-1_59000100 (no other package's in the Hub's catalog of 2026-11-19)
+id_prefix = "FM-1_59"          # package identity: dev FM-1_5900, release 0.3 FM-1_59000300 (no other package's in the Hub's catalog, 2026-11-20)
 usb_manufacturer = "fm1-base"
 usb_product = "METRONOME FM-1"
 o2 = []
-include = ["../common"]        # ledfx (firmware/common, MIT)
+include = ["common"]           # ledfx, hostlink (from M-VAVE_FM-1 firmware/common, MIT)
 words = "words.tsv"
 ble = false                    # USB only for now
 tagline = "a stage metronome with a setlist on the keys"
-repo = "https://github.com/daviddwlee84/M-VAVE_FM-1"
-site = "https://daviddwlee84.github.io/M-VAVE_FM-1/dev/metronome/"
+repo = "https://github.com/daviddwlee84/fm1-metronome"
+site = "https://daviddwlee84.github.io/fm1-metronome/web/"
+install = "https://github.com/daviddwlee84/fm1-metronome#install"
+screenshot = "docs/screen.png"
 licence = "GPL-3.0-or-later"
 credits = "Built on fm1-base by Charles Vestal. The click and the transport follow this repository's RHYTHM."
 author = "daviddwlee84"
-description = "A metronome for playing a set. SET: 16 songs on the white keys, each with its own tempo, meter, pattern and sound; a press switches song at the next bar. REC edits: pick a key, tap it for the tempo, or turn SELECT. K2 jumps between the tempo markings (LARGO to PRESTO), shown beside the BPM. Hold SEL to clear the set after a show. GRID: the bar's steps on the white keys, off, ghost, normal or accent, as bright as they sound; K3 sets a meter (6/8, 7/8 2+2+3...). CLASSIC: a rhythm-watch layout, four note layers mixed on K1-K4 and an accent every 1 to 9 beats."
+description = "A metronome for playing a set. SET: 16 songs on the white keys, each with its own tempo, meter, pattern and sound; a press switches song at the next bar. K2 jumps between tempo markings (LARGO to PRESTO), shown beside the BPM. GRID: the bar's steps on the white keys, off, ghost, normal or accent, as bright as they sound; K3 sets a meter (6/8, 7/8 2+2+3...). CLASSIC: a rhythm-watch layout, four note layers mixed on K1-K4. Tap tempo on the black keys. A web page edits the setlist, plays it and sends it over USB."
 tags = ["utility"]
