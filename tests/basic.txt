@@ -84,6 +84,15 @@ wait 2100
 expect play_bpm 140
 expect pend -1
 expect switches 1
+# a stray black key on stage does not change the tempo (tap tempo is for EDIT while playing)
+tapkey b2
+wait 410
+tapkey b2
+wait 410
+tapkey b2
+expect bpm 140
+expect play_bpm 140
+expect locked 3
 # an empty key does nothing
 tapkey w9
 expect active 2
@@ -167,7 +176,8 @@ expect bpm 120
 
 # ---- everything kept over a restart
 wait 3200
-expect saves 1
+# (two saves: one 3 s after the live section's last change, while the stray black keys were tried; this one)
+expect saves 2
 reboot
 wait 600
 expect page 1
@@ -184,3 +194,114 @@ shot after_reboot.png
 tap HOME
 expect page 0
 shot set_after_reboot.png
+
+# ---- v0.2: the tempo markings, a jump a click on SET's K2 (song 3 at 120: ALLEGRO)
+expect marking 6
+turn K2 1
+expect bpm 132
+turn K2 1
+expect bpm 184
+expect marking 7
+turn K2 -1
+expect bpm 132
+turn K2 -1
+expect bpm 112
+expect marking 5
+shot set_marking.png
+# SELECT: slow, 1 a detent; fast (20 ms a detent), 5 a detent
+turn SELECT 1
+expect bpm 113
+turn SELECT -1
+expect bpm 112
+wait 300
+turn SELECT 3 20
+expect bpm 123
+wait 300
+turn SELECT -3 20
+expect bpm 112
+
+# ---- 6/8: GRID in triplets is a compound meter, two dotted-quarter beats of three steps
+tap HOME
+tap SEL
+expect mode 0
+turn K1 -2
+expect bpb 2
+turn K2 -1
+expect div 3
+wait 1600
+shot grid_6_8.png
+# K3: the meter presets, from 6/8 up to 6/8 counted in 6, 9/8, 12/8, 5/8, 7/8, then down to 2/4
+expect preset 4
+turn K3 1
+expect preset 5
+expect bpb 6
+expect div 1
+expect step3 2
+wait 1600
+shot grid_6_8_in_6.png
+turn K3 4
+expect preset 9
+expect bpb 7
+shot grid_7_8.png
+turn K3 1
+expect preset 9
+turn K3 -9
+expect preset 0
+expect bpb 2
+# an edited bar is no preset; K3 then starts at the preset of its size
+tapkey w1
+expect preset -1
+turn K3 1
+expect preset 0
+turn K3 4
+expect preset 4
+tap HOME
+wait 1600
+shot set_6_8.png
+
+# ---- CLEAR ALL after the show: in EDIT, SEL held 2 s without a key, then PLAY
+tap REC
+expect edit 1
+wait 1600
+shot set_edit_hint.png
+# SEL used for a key does not ask
+press SEL
+tapkey w15
+wait 2100
+release SEL
+expect confirm 0
+# any other button keeps the songs
+press SEL
+wait 2100
+release SEL
+expect confirm 1
+shot set_clear_ask.png
+tap OCT+
+expect confirm 0
+expect used 7
+# unanswered for 5 s: nothing happens
+press SEL
+wait 2100
+release SEL
+expect confirm 1
+wait 5100
+expect confirm 0
+expect used 7
+# PLAY: one song left, 120 BPM 4/4, not playing
+press SEL
+wait 2100
+release SEL
+tap PLAY
+expect confirm 0
+expect running 0
+expect used 1
+expect active 0
+expect bpm 120
+expect bpb 4
+expect edit 0
+shot set_cleared.png
+wait 3200
+reboot
+wait 600
+expect used 1
+expect bpm 120

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* METRONOME v0.1: SET, GRID and CLASSIC (see app.h). What sounds when is metro.c.
+/* METRONOME v0.2: SET, GRID and CLASSIC (see app.h). What sounds when is metro.c.
  *
  * Time: the audio's sample count is the clock, as in RHYTHM. The render plays every click on its exact sample (a
  * tick is a twelfth of a beat), not on the next block. A change while playing (another song, a new tempo, a step)
@@ -12,7 +12,7 @@
 #include "ledfx.c"
 
 #define FW_MAJOR 0
-#define FW_MINOR 1
+#define FW_MINOR 2
 #define SR 44100u
 
 /* ---------------------------------------------------------------- settings --- */
@@ -231,6 +231,10 @@ static struct {
     uint32_t tt[4], tt_n;                /* tap tempo: the last presses, ms */
     int32_t cur;                         /* the tick playing now, -1 stopped or before the start */
     uint32_t lit, mid, dim;              /* the keys' lights (checks) */
+    uint32_t sel_at;                     /* SET EDIT: when SEL went down (0: not held, or a key used it) */
+    uint32_t confirm_until;              /* CLEAR ALL? waits for PLAY until then (0: not asking) */
+    uint32_t sel_turn_at;                /* SELECT: the last detent, for its acceleration */
+    uint32_t locked;                     /* SET: black-key taps ignored while playing (checks) */
 } ui;
 static int host_fails;
 
@@ -291,6 +295,32 @@ static void say_int(const char *a, int v, const char *unit)
     tint(t, v);
     tcat(t, unit);
     app_say(a, t);
+}
+
+/* the meter as the screens and the voice say it: GRID "4/4 8THS", in triplets the compound meter ("6/8": two
+ * beats of a dotted quarter, three steps each), a preset in eighths by its name ("7/8 2+2+3"); CLASSIC
+ * "BEAT 5 CLASSIC" */
+static void meter_text(char *t, const mt_slot_t *s)
+{
+    t[0] = 0;
+    if (s->mode == MT_GRID) {
+        int m = mt_preset_match(s);
+        if (m >= 0 && mt_preset_eighths(m))   /* a beat an eighth: the preset's name is its meter */
+            tcat(t, mt_preset_name(m));
+        else if (s->div == 3) {
+            tint(t, s->bpb * 3);
+            tcat(t, "/8");
+        } else {
+            tint(t, s->bpb);
+            tcat(t, "/4  ");
+            tcat(t, DIV_NAME[s->div]);
+        }
+    } else if (s->beat) {
+        tcat(t, "BEAT ");
+        tint(t, s->beat);
+        tcat(t, "  CLASSIC");
+    } else
+        tcat(t, "NO ACCENT  CLASSIC");
 }
 
 static void changed(uint32_t r)
@@ -456,6 +486,33 @@ static void bpm_by(int d)
     changed(R_ALL);
 }
 
+static void marking_by(int d)            /* SET K2: the next tempo marking's typical tempo */
+{
+    char t[24];
+    CUR->bpm = (uint16_t)mt_marking_jump(CUR->bpm, d);
+    CUR->used = 1;
+    tap_reset();
+    t[0] = 0;
+    tint(t, CUR->bpm);
+    tcat(t, " BPM");
+    app_say(mt_marking_name(mt_marking(CUR->bpm)), t);
+    tr_follow(FOLLOW_EDIT);
+    changed(R_ALL);
+}
+
+static void clear_all(void)              /* after the show: back to one song, 120 BPM 4/4 (the switch setting stays) */
+{
+    uint8_t now = rec.swap_now;
+    if (ui.running) tr_stop();
+    defaults();
+    rec.swap_now = now;
+    ui.edit = 0;
+    ui.confirm_until = 0;
+    tap_reset();
+    app_say("SET", "ALL CLEARED");
+    changed(R_ALL);
+}
+
 static void edited(uint32_t r)           /* the active song changed: play it so, keep it */
 {
     CUR->used = 1;
@@ -477,8 +534,12 @@ static void key_set(uint32_t k, uint32_t ms, uint32_t btn)   /* SET: the white k
 {
     int w = white_of(k);
     char t[24];
-    if (w < 0) {                         /* a black key: tap tempo */
-        tap_tempo(ms);
+    if (w < 0) {                         /* a black key: tap tempo, but not while a song plays on stage (EDIT still taps) */
+        if (ui.running && !ui.edit) {
+            toast("TAP TEMPO", "REC: EDIT");   /* (shown, not spoken: a stray touch stays quiet) */
+            ui.locked++;
+        } else
+            tap_tempo(ms);
         return;
     }
     if (!ui.edit) {
@@ -493,6 +554,7 @@ static void key_set(uint32_t k, uint32_t ms, uint32_t btn)   /* SET: the white k
     }
     if (btn >> B_SEL & 1u) {             /* EDIT, SEL held: clear it (the last one stays) */
         uint32_t i;
+        ui.sel_at = 0;                   /* (SEL used for a key: no CLEAR ALL on this hold) */
         if (!rec.slot[w].used) return;
         if (nused() <= 1) {
             app_say("SONG", "THE LAST ONE STAYS");
@@ -549,10 +611,7 @@ static void key_pat(uint32_t k, uint32_t ms)   /* GRID: the white keys are the s
 static void meter_say(void)
 {
     char t[24];
-    t[0] = 0;
-    tint(t, CUR->bpb);
-    tcat(t, "/4 ");
-    tcat(t, DIV_NAME[CUR->div]);
+    meter_text(t, CUR);
     app_say("BAR", t);
 }
 
@@ -560,9 +619,32 @@ static void input(void)
 {
     uint32_t btn = plat_buttons(), k;
     int32_t e;
+    uint32_t now = plat_ms();
+    if (ui.confirm_until && (int32_t)(now - ui.confirm_until) >= 0) {   /* CLEAR ALL? unanswered */
+        ui.confirm_until = 0;
+        ui.redraw |= R_FOOT;
+    }
+    /* SET EDIT: SEL held 2 s without a key asks CLEAR ALL? */
+    if (!(btn >> B_SEL & 1u) || rec.page != PG_SET || !ui.edit) ui.sel_at = 0;
+    else if (ui.sel_at && now - ui.sel_at >= 2000u && !ui.confirm_until) {
+        ui.sel_at = 0;
+        ui.confirm_until = now + 5000u;
+        app_say("CLEAR ALL?", "PLAY = YES");
+        ui.redraw |= R_FOOT;
+    }
     for (k = 0; k < NB; k++) {
         uint32_t bit = 1u << k;
         if (!(btn & bit) || (ui.btn & bit)) continue;
+        if (ui.confirm_until) {          /* the answer: PLAY clears, anything else keeps them */
+            ui.confirm_until = 0;
+            if (k == B_PLAY) clear_all();
+            else {
+                app_say("CLEAR ALL", "CANCELLED");
+                ui.redraw |= R_FOOT;
+            }
+            continue;
+        }
+        if (k == B_SEL && rec.page == PG_SET && ui.edit) ui.sel_at = now ? now : 1u;
         if (k == B_HOME) set_page(rec.page == PG_SET ? PG_PAT : PG_SET);
         else if (k == B_PLAY) {
             if (ui.running) tr_stop();
@@ -591,7 +673,11 @@ static void input(void)
         }
     }
     ui.btn = btn;
-    if ((e = plat_enc(EN_SELECT)) != 0) bpm_by(e);
+    if ((e = plat_enc(EN_SELECT)) != 0) {  /* +-1 a detent; turned fast (under 50 ms a detent), +-5 */
+        int fast = e > 1 || e < -1 || (ui.sel_turn_at && now - ui.sel_turn_at < 50u);
+        ui.sel_turn_at = now ? now : 1u;
+        bpm_by(fast ? 5 * e : e);
+    }
     if ((e = plat_enc(EN_ALGO)) != 0) {
         CUR->sound = (uint8_t)clamp(CUR->sound + (e > 0 ? 1 : -1), 0, MT_NSND - 1);
         app_say("SOUND", SND_NAME[CUR->sound]);
@@ -604,7 +690,7 @@ static void input(void)
             app_say("SWITCH", rec.swap_now ? "NOW" : "NEXT BAR");
             changed(R_ALL);
         }
-        (void)plat_enc(EN_K2);
+        if ((e = plat_enc(EN_K2)) != 0) marking_by(e);
         (void)plat_enc(EN_K3);
         (void)plat_enc(EN_K4);
     } else if (CUR->mode == MT_GRID) {
@@ -621,7 +707,21 @@ static void input(void)
             meter_say();
             edited(R_ALL);
         }
-        (void)plat_enc(EN_K3);
+        if ((e = plat_enc(EN_K3)) != 0) {  /* the meter presets; off a preset, the first click lands on the nearest */
+            int m = mt_preset_match(CUR), i;
+            if (m < 0) {
+                for (i = 0; i < MT_NPRESET; i++) {
+                    mt_slot_t t = *CUR;
+                    mt_preset_apply(&t, i);
+                    if (t.bpb == CUR->bpb && t.div == CUR->div) break;
+                }
+                m = i < MT_NPRESET ? i : 2;   /* (else 4/4) */
+            } else
+                m = clamp(m + (e > 0 ? 1 : -1), 0, MT_NPRESET - 1);
+            mt_preset_apply(CUR, m);
+            meter_say();
+            edited(R_ALL);
+        }
         (void)plat_enc(EN_K4);
     } else {
         for (k = 0; k < MT_NLAYER; k++)
@@ -634,6 +734,11 @@ static void input(void)
     while (kq_r != kq_w) {               /* the presses the tick dated */
         uint32_t key = kq_key[kq_r % KQ], ms = kq_ms[kq_r % KQ];
         kq_r++;
+        if (ui.confirm_until) {
+            ui.confirm_until = 0;
+            app_say("CLEAR ALL", "CANCELLED");
+            continue;
+        }
         if (rec.page == PG_SET) key_set(key, ms, btn);
         else key_pat(key, ms);
     }
@@ -734,16 +839,13 @@ static void draw_tempo_left(int32_t oy)  /* SET and GRID's top: the tempo, the b
     t[0] = 0;
     tint(t, CUR->bpm);
     text_c(62, 6 - oy, &FONT_L, t, ui.running ? C_WHITE : C_HI);
-    text_c(62, 50 - oy, &FONT_T, "BPM", C_GRAY);
-    t[0] = 0;
-    if (CUR->mode == MT_GRID) {
-        tint(t, CUR->bpb);
-        tcat(t, "/4 ");
-        tcat(t, DIV_NAME[CUR->div]);
-    } else {
-        tcat(t, "CLASSIC  BEAT ");
-        tint(t, CUR->beat);
+    {                                    /* "BPM ALLEGRO", centred together */
+        const char *m = mt_marking_name(mt_marking(CUR->bpm));
+        int32_t w = text_w(&FONT_T, "BPM") + 6 + text_w(&FONT_T, m), x = 62 - w / 2;
+        x = cv_text(x, 50 - oy, &FONT_T, "BPM", C_GRAY);
+        cv_text(x + 6, 50 - oy, &FONT_T, m, C_HI);
     }
+    meter_text(t, CUR);
     text_c(62, 66 - oy, &FONT_T, t, C_AMB);
     draw_pendulum(176, 84, 70, oy);
 }
@@ -771,7 +873,8 @@ static void draw_classic_top(int32_t oy)
         int d = i == 0 ? bpm / 100 : i == 1 ? bpm / 10 % 10 : bpm % 10;
         seg_digit(10 + i * 36, 18 - oy, 28, 50, i == 0 && bpm < 100 ? -1 : d, C_HI, off);
     }
-    cv_text(10, 72 - oy, &FONT_T, "TEMPO", C_GRAY);
+    i = cv_text(10, 72 - oy, &FONT_T, "TEMPO", C_GRAY);
+    cv_text(i + 6, 72 - oy, &FONT_T, mt_marking_name(mt_marking(bpm)), C_HI);
     seg_digit(150, 18 - oy, 28, 50, CUR->beat, C_HI, off);   /* BEAT */
     cv_text(150, 72 - oy, &FONT_T, "BEAT", C_GRAY);
     /* the lamps: red on the accent, green on the other beats */
@@ -831,9 +934,9 @@ static void draw_steps(int32_t oy)       /* GRID's bottom: the bar, a column a s
         if (w >= 14 || i % s->div == 0) text_c(x + w / 2, 62 - oy, &FONT_T, t, i == play ? C_GRN : C_DIM);
     }
     t[0] = 0;
-    tcat(t, "K1 ");
+    tcat(t, "K1 BEATS ");
     tint(t, s->bpb);
-    tcat(t, "/4   K2 ");
+    tcat(t, "   K2 ");
     tcat(t, DIV_NAME[s->div]);
     tcat(t, "   ");
     tcat(t, SND_NAME[s->sound]);
@@ -876,13 +979,15 @@ static void draw_footer(void)
 {
     cv_begin(240, 32, C_BLACK);
     cv_rect(0, 0, 240, 1, C_LINE);
-    if (plat_ms() < ui.toast_until) {
+    if (ui.confirm_until)
+        cv_text(8, 7, &FONT_B, "CLEAR ALL?  PLAY = YES", C_RED);
+    else if (plat_ms() < ui.toast_until) {
         int32_t x = cv_text(8, 10, &FONT_T, ui.toast[0], C_GRAY);
         cv_text(x + 8, 7, &FONT_B, ui.toast[1], C_HI);
     } else {
         const char *h;
-        if (rec.page == PG_SET) h = ui.edit ? "KEY: PICK, TAP TEMPO   SEL+KEY: CLEAR" : "KEY: SONG   REC: EDIT   HOME: PATTERN";
-        else if (CUR->mode == MT_GRID) h = "KEY: STEP LEVEL   SEL: CLASSIC";
+        if (rec.page == PG_SET) h = ui.edit ? "KEY: PICK, TAP   SEL+KEY: DEL   HOLD SEL: DEL ALL" : "KEY: SONG   REC: EDIT   K2: TEMPO MARK";
+        else if (CUR->mode == MT_GRID) h = "K1 BEATS  K2 DIV  K3 METER  SEL CLASSIC";
         else h = "K1-K4: MIX   OCT: BEAT   SEL: GRID";
         cv_text(8, 10, &FONT_T, h, C_DIM);
     }
@@ -1006,6 +1111,10 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "mid_keys")) *got = (int)ui.mid;
     else if (!strcmp(what, "dim_keys")) *got = (int)ui.dim;
     else if (!strcmp(what, "saves")) *got = (int)saves;
+    else if (!strcmp(what, "marking")) *got = mt_marking(CUR->bpm);
+    else if (!strcmp(what, "preset")) *got = mt_preset_match(CUR);
+    else if (!strcmp(what, "locked")) *got = (int)ui.locked;
+    else if (!strcmp(what, "confirm")) *got = ui.confirm_until != 0;
     else return 0;
     return 1;
 }

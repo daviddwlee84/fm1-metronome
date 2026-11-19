@@ -90,6 +90,78 @@ void mt_hits(const mt_slot_t *s, uint32_t tick, mt_hits_t *h)
     }
 }
 
+static const struct {
+    const char *name;
+    uint8_t bpb, div;
+    const char *steps;                   /* A accent, N normal, G ghost, . off; 0: mt_grid_default */
+} PRESET[MT_NPRESET] = {
+    { "2/4", 2, 1, 0 },          { "3/4", 3, 1, 0 },          { "4/4", 4, 1, 0 },
+    { "5/4", 5, 1, 0 },          { "6/8", 2, 3, 0 },          { "6/8 IN 6", 6, 1, "AGGNGG" },
+    { "9/8", 3, 3, 0 },          { "12/8", 4, 3, 0 },         { "5/8 3+2", 5, 1, "AGGNG" },
+    { "7/8 2+2+3", 7, 1, "AGNGNGG" },
+};
+
+static int pi_ok(int i) { return i < 0 ? 0 : i >= MT_NPRESET ? MT_NPRESET - 1 : i; }
+
+const char *mt_preset_name(int i) { return PRESET[pi_ok(i)].name; }
+
+int mt_preset_eighths(int i) { return PRESET[pi_ok(i)].steps != 0; }
+
+void mt_preset_apply(mt_slot_t *s, int i)
+{
+    uint32_t k;
+    i = pi_ok(i);
+    s->bpb = PRESET[i].bpb;
+    s->div = PRESET[i].div;
+    mt_grid_default(s);
+    if (PRESET[i].steps)
+        for (k = 0; PRESET[i].steps[k]; k++) {
+            char c = PRESET[i].steps[k];
+            s->steps[k] = (uint8_t)(c == 'A' ? MT_ACCENT : c == 'N' ? MT_NORMAL : c == 'G' ? MT_GHOST : MT_OFF);
+        }
+}
+
+int mt_preset_match(const mt_slot_t *s)
+{
+    int i;
+    uint32_t k;
+    for (i = 0; i < MT_NPRESET; i++) {
+        mt_slot_t t = *s;
+        mt_preset_apply(&t, i);
+        if (t.bpb != s->bpb || t.div != s->div) continue;
+        for (k = 0; k < MT_STEPS && t.steps[k] == s->steps[k]; k++) {}
+        if (k == MT_STEPS) return i;
+    }
+    return -1;
+}
+
+static const struct {
+    const char *name;
+    int16_t lo, typ;                     /* the range starts at lo (the next one's lo ends it); a jump lands on typ */
+} MARK[MT_NMARK] = {
+    { "LARGHISSIMO", MT_BPM_MIN, 35 }, { "LARGO", 40, 50 },       { "LARGHETTO", 60, 63 },
+    { "ADAGIO", 66, 70 },              { "ANDANTE", 76, 92 },     { "MODERATO", 108, 112 },
+    { "ALLEGRO", 120, 132 },           { "PRESTO", 168, 184 },    { "PRESTISSIMO", 200, 208 },
+};
+
+int mt_marking(int bpm)
+{
+    int i = MT_NMARK - 1;
+    while (i > 0 && bpm < MARK[i].lo) i--;
+    return i;
+}
+
+const char *mt_marking_name(int i) { return MARK[i < 0 ? 0 : i >= MT_NMARK ? MT_NMARK - 1 : i].name; }
+
+int mt_marking_typical(int i) { return MARK[i < 0 ? 0 : i >= MT_NMARK ? MT_NMARK - 1 : i].typ; }
+
+int mt_marking_jump(int bpm, int dir)
+{
+    int i = mt_marking(bpm);
+    if (dir > 0) return bpm < MARK[i].typ ? MARK[i].typ : i + 1 < MT_NMARK ? MARK[i + 1].typ : bpm;
+    return bpm > MARK[i].typ ? MARK[i].typ : i > 0 ? MARK[i - 1].typ : bpm;
+}
+
 uint32_t mt_tick_q8(uint32_t bpm, uint32_t sr) { return sr * 60u * 256u / bpm / MT_TPB; }   /* 44100: fits 32 bits */
 
 uint32_t mt_tap_bpm(const uint32_t *ms, uint32_t n)

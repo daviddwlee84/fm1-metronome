@@ -48,3 +48,22 @@ int32_t mt_step_at(const mt_slot_t *s, uint32_t tick);   /* GRID: the step playi
 void mt_hits(const mt_slot_t *s, uint32_t tick, mt_hits_t *h);   /* what sounds on this tick */
 uint32_t mt_tick_q8(uint32_t bpm, uint32_t sr);   /* samples a tick, x256 */
 uint32_t mt_tap_bpm(const uint32_t *ms, uint32_t n);   /* the last n (2..4) press times, oldest first: BPM, 0 none */
+
+/* GRID's meter presets (K3): beats, steps a beat and the pattern. The ones in eighths (6/8 counted in 6, 5/8, 7/8)
+ * are a beat an eighth, so the BPM is the eighth's; 6/8, 9/8 and 12/8 are two, three, four dotted quarters of three
+ * steps. Nothing is stored: the screen names the preset the song matches (mt_preset_match) */
+#define MT_NPRESET 10
+const char *mt_preset_name(int i);
+int mt_preset_eighths(int i);            /* a beat is an eighth (the name is the meter to show) */
+void mt_preset_apply(mt_slot_t *s, int i);
+int mt_preset_match(const mt_slot_t *s); /* the preset this bar is, -1 none */
+
+/* the classical tempo markings, on the metronome's (Maelzel's) scale so the ranges do not overlap:
+ * LARGHISSIMO <40, LARGO 40-59, LARGHETTO 60-65, ADAGIO 66-75, ANDANTE 76-107, MODERATO 108-119,
+ * ALLEGRO 120-167, PRESTO 168-199, PRESTISSIMO 200+ */
+#define MT_NMARK 9
+int mt_marking(int bpm);                 /* the marking's index 0..MT_NMARK-1 */
+const char *mt_marking_name(int i);
+int mt_marking_typical(int i);           /* a typical tempo inside it (where a jump lands) */
+int mt_marking_jump(int bpm, int dir);   /* the next marking's typical tempo up (dir > 0) or down; from inside a
+                                            range, off its typical tempo, it lands on that first */
