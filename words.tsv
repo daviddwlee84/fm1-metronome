@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# METRONOME's words for a screen reader (fm1-reader): the text on the screen <TAB> what to say.
+# url: https://daviddwlee84.github.io/M-VAVE_FM-1/dev/metronome/
+METRONOME	metronome
+SET	set list
+GRID	grid
+CLASSIC	classic
+BPM	beats per minute
+TAP TEMPO	tap tempo
+SONG	song
+EMPTY	empty
+EDIT	edit
+CLEARED	cleared
+NEXT BAR	next bar
+NOW	now
+ACCENT	accent
+GHOST	ghost
+CLICK	click
+WOOD	wood
+BEEP	beep
+8THS	eighths
+16THS	sixteenths
+TRIP	triplets
+QUARTERS	quarters

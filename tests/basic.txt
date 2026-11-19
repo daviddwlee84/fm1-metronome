@@ -1,0 +1,186 @@
+# METRONOME in the host simulator: just fw-test metronome (screenshots and audio in firmware/metronome/build/host/)
+# Keys: w0..w15 are the white keys (songs on SET, steps on GRID), b0..b10 the black ones (tap tempo).
+wait 600
+shot boot.png
+expect page 0
+expect active 0
+expect used 1
+expect bpm 120
+expect mode 0
+expect running 0
+# stopped: song 1's key lit, the others dark; the black keys glow (tap here)
+expect lit_keys 1
+
+# ---- play: 4/4 at 120, one accent and three beats a bar
+count_reset
+tap PLAY
+expect running 1
+wav set.wav
+wait 1900
+wavstop
+expect peak_db_min -30
+expect n_accent 1
+expect n_normal 3
+shot set_playing.png
+
+# ---- EDIT: song 2 by tapping its key at 100 BPM (600 ms apart; tapkey takes 90 ms)
+tap PLAY
+expect running 0
+tap REC
+expect edit 1
+tapkey w1
+wait 510
+tapkey w1
+wait 510
+tapkey w1
+wait 510
+tapkey w1
+expect active 1
+expect used 3
+expect bpm 100
+shot set_edit.png
+# song 3 at 140 with SELECT, song 4 at 75 with OCT- and SELECT
+tapkey w2
+turn SELECT 40
+expect bpm 140
+tapkey w3
+tap OCT-
+tap OCT-
+tap OCT-
+tap OCT-
+tap OCT-
+tap OCT-
+tap OCT-
+tap OCT-
+tap OCT-
+tap OCT-
+tap OCT-
+tap OCT-
+tap OCT-
+expect bpm 75
+expect used 15
+# clear song 4 (SEL held), back to song 3
+press SEL
+tapkey w3
+release SEL
+expect used 7
+expect active 0
+tap REC
+expect edit 0
+
+# ---- live: song 1 playing, song 3 picked, it starts at the next bar
+tapkey w2
+expect active 2
+tapkey w0
+expect active 0
+tap PLAY
+wait 300
+expect play_bpm 120
+tapkey w2
+expect pend 2
+expect play_bpm 120
+shot set_pending.png
+wait 2100
+expect play_bpm 140
+expect pend -1
+expect switches 1
+# an empty key does nothing
+tapkey w9
+expect active 2
+# SELECT while playing: the tempo follows at once, the beat goes on
+turn SELECT 2
+wait 100
+expect play_bpm 142
+turn SELECT -2
+tap PLAY
+
+# ---- GRID: 4/4 eighths at 140 (song 3), the "and" of 2 accented, beat 3 off: A g N A . g N g
+tap HOME
+expect page 1
+expect mode 0
+turn K2 1
+expect div 2
+expect step0 3
+expect step1 1
+expect step2 2
+tapkey w3
+tapkey w3
+expect step3 3
+tapkey w4
+tapkey w4
+expect step4 0
+shot grid.png
+count_reset
+tap PLAY
+wav grid.wav
+wait 1600
+wavstop
+tap PLAY
+expect n_accent 2
+expect n_normal 2
+expect n_ghost 3
+shot grid_after.png
+# 7/8: K1 to 7 beats, the eighths stay (14 steps)
+turn K1 3
+expect bpb 7
+expect div 2
+turn K2 2
+expect div 2
+turn K1 -3
+expect bpb 4
+turn K2 2
+expect div 4
+expect step15 1
+
+# ---- CLASSIC: SEL, a rhythm watch: quarters and eighths, accent every 3
+tap SEL
+expect mode 1
+expect lit_keys 0
+tap OCT-
+expect beat 3
+turn K2 5
+expect mix1 5
+turn ALGO 1
+expect sound 1
+expect bpm 140
+expect beat 3
+count_reset
+tap PLAY
+wav classic.wav
+wait 1530
+shot classic.png
+wavstop
+tap PLAY
+# 140 BPM, 1.6 s from 50 ms in: beats 0..3 (accents on 0 and 3), an eighth after each
+expect n_accent 2
+expect n_normal 2
+expect n_8 4
+# tap tempo on the black keys, 4 taps 500 ms apart
+tapkey b2
+wait 410
+tapkey b2
+wait 410
+tapkey b2
+wait 410
+tapkey b2
+expect bpm 120
+
+# ---- everything kept over a restart
+wait 3200
+expect saves 1
+reboot
+wait 600
+expect page 1
+expect active 2
+expect used 7
+expect mode 1
+expect bpm 120
+expect beat 3
+expect mix1 5
+expect sound 1
+expect slotbpm1 100
+expect slotbpm0 120
+shot after_reboot.png
+tap HOME
+expect page 0
+shot set_after_reboot.png

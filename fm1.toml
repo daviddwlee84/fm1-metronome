@@ -1,0 +1,18 @@
+# METRONOME's build settings (fm1-base tools/build.py)
+name = "METRONOME"
+title = "METRONOME"
+id_prefix = "FM-1_59"          # package identity: dev FM-1_5900, release 0.1 FM-1_59000100 (no other package's in the Hub's catalog of 2026-11-19)
+usb_manufacturer = "fm1-base"
+usb_product = "METRONOME FM-1"
+o2 = []
+include = ["../common"]        # ledfx (firmware/common, MIT)
+words = "words.tsv"
+ble = false                    # USB only for now
+tagline = "a stage metronome with a setlist on the keys"
+repo = "https://github.com/daviddwlee84/M-VAVE_FM-1"
+site = "https://daviddwlee84.github.io/M-VAVE_FM-1/dev/metronome/"
+licence = "GPL-3.0-or-later"
+credits = "Built on fm1-base by Charles Vestal. The click and the transport follow this repository's RHYTHM."
+author = "daviddwlee84"
+description = "A metronome for playing a set. SET: 16 songs on the white keys, each with its own tempo, meter, pattern and sound; the stored keys glow, the playing one is lit, and a press switches song at the next bar. Hold REC to edit: press a key to pick it, tap it to set the tempo, or turn SELECT. GRID: the bar's steps on the white keys, each off, ghost, normal or accent, as bright as it sounds. CLASSIC: a rhythm-watch layout, the quarter, eighth, triplet and sixteenth layers mixed on four knobs and an accent every 1 to 9 beats. Tap tempo on the black keys."
+tags = ["utility"]
