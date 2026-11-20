@@ -39,7 +39,7 @@ from the computer, and the transport, over USB or Bluetooth.
 | Page | Controls |
 |---|---|
 | SET | white key: play that song (while playing: at the next bar, the key blinks until then); `OCT-` / `OCT+` tempo ±5; `K1` switch songs at the NEXT BAR or NOW; `K2` jump to the next tempo marking; `REC` EDIT |
-| SET: EDIT | white key: pick it (an empty one starts as a copy), press it again on the beat to tap its tempo; `SEL` + key: clear it; `SEL` held 2 s: CLEAR ALL? (`PLAY` yes); `K4` Bluetooth on / off; `REC` leave |
+| SET: EDIT | white key: pick it (an empty one starts as a copy), press it again on the beat to tap its tempo; `SEL` + key: clear it; `SEL` held 2 s: CLEAR ALL? (`PLAY` yes); `K4` Bluetooth on / off (the footer says so every other 3 s); `REC` leave |
 | GRID | white key: a step's level; `K1` beats 1–9; `K2` a beat in quarters / 8ths / triplets / 16ths; `K3` meter presets; `OCT±` tempo ±5; `REC` tap tempo; `SEL` CLASSIC |
 | CLASSIC | `K1`–`K4` the four layers' volumes 0–7; `OCT-` / `OCT+` an accent every 1–9 beats (0 none); any key or `REC` tap tempo; `SEL` GRID |
 
@@ -81,7 +81,9 @@ METRONOME 0.4 does the same over Bluetooth (`SET EDIT`, `K4`: on by default), wi
 The FM-1 does not send a message a beat. It says what plays and when (a STATE: the song, a tick and the sample it
 sounds at, the tempo) when that changes and once a second, and the page counts the beats on its own clock, so USB's
 jitter (a few ms) and Bluetooth's (tens of ms, in bunches) never reach the beat. What is left is a fixed delay:
-*Tap along to calibrate* on the page takes it out. `python -m fm1_metronome watch` prints the STATEs.
+*Tap along to calibrate* on the page takes it out. From 0.5 the page also times a round trip each second (PING,
+answered at once by PONG with the FM-1's clock) and sets its clock by it, as NTP does, so the link's own delay comes
+out as well and less is left to calibrate. `python -m fm1_metronome watch` prints the STATEs and the round trips.
 
 ![the live page](docs/screens/live_page.png)
 
@@ -94,7 +96,7 @@ From fm1-base's host simulator (`tests/basic.txt`).
 | ![SET](docs/screens/set_playing.png) SET, playing | ![marking](docs/screens/set_marking.png) `K2`: a tempo marking | ![pending](docs/screens/set_pending.png) the next song waits for the bar |
 | ![GRID](docs/screens/grid.png) GRID, 4/4 eighths | ![6/8](docs/screens/grid_6_8.png) GRID 6/8 | ![7/8](docs/screens/grid_7_8.png) `K3`: 7/8 2+2+3 |
 | ![CLASSIC](docs/screens/classic.png) CLASSIC | ![clear](docs/screens/set_clear_ask.png) CLEAR ALL? | ![load](docs/screens/load_ask.png) a setlist from the computer |
-| ![mute](docs/screens/live_mute.png) the page sounds the clicks (0.4) | ![bt](docs/screens/live_bt_off.png) `K4`: Bluetooth off | |
+| ![mute](docs/screens/live_mute.png) the page sounds the clicks (0.4) | ![bt](docs/screens/live_bt_off.png) `K4`: Bluetooth off | ![hint](docs/screens/set_edit_bt_hint.png) EDIT's footer: where Bluetooth is (0.5) |
 
 ## Install
 

@@ -6,10 +6,10 @@
 (function (root) {
   const HEAD = [0x7D, 0x4D, 0x54], VER = 1;
   const T = { HELLO_ACK: 0x01, SET_REQ: 0x04, SET_LOAD: 0x05, CTRL: 0x06,
-    HELLO: 0x41, HEARTBEAT: 0x42, SET: 0x44, SET_DONE: 0x45, STATE: 0x46 };
+    HELLO: 0x41, HEARTBEAT: 0x42, SET: 0x44, SET_DONE: 0x45, STATE: 0x46, PONG: 0x47 };
   // 0.4, the live link: CTRL's ops, STATE's flags (app.c), and the firmware minor they start at
-  const C = { START: 1, STOP: 2, PICK: 3, BPM: 4, MUTE: 5, STATE: 6 };
-  const SF = { RUN: 1, MUTE: 2, NEXT: 4, NOW: 8 }, LIVE_MINOR = 4, SR = 44100, TPB = 12, STATE_N = 48;
+  const C = { START: 1, STOP: 2, PICK: 3, BPM: 4, MUTE: 5, STATE: 6, PING: 7 };
+  const SF = { RUN: 1, MUTE: 2, NEXT: 4, NOW: 8 }, LIVE_MINOR = 4, PING_MINOR = 5, SR = 44100, TPB = 12, STATE_N = 48;
   const DONE = { LOADED: 0, DECLINED: 1, REFUSED: 2 };
   const FORMAT = 1, NSLOT = 16, NSTEPS = 16, SONG_N = 28, RECORD_N = 1 + 3 + NSLOT * SONG_N + 2, CHUNK = 49;
   const FRAMES = Math.ceil(RECORD_N / CHUNK);
@@ -133,6 +133,13 @@
     if (op === C.BPM) return frame(T.CTRL, [op, arg & 0x7F, arg >> 7]);
     return frame(T.CTRL, arg === undefined ? [op] : [op, arg]);
   }
+  // 0.5: PING carries 28 bits of token as four 7-bit bytes; PONG gives them back with the FM-1's sample then
+  function ping(token) { return frame(T.CTRL, [C.PING, token & 0x7F, token >> 7 & 0x7F, token >> 14 & 0x7F, token >> 21 & 0x7F]); }
+  function decodePong(payload) {
+    if (payload.length < 9) throw new Error(`a PONG of ${payload.length} bytes`);
+    const b = unpack7(payload.slice(4, 9));
+    return { token: payload[0] | payload[1] << 7 | payload[2] << 14 | payload[3] << 21, now: (b[0] | b[1] << 8 | b[2] << 16 | b[3] << 24) >>> 0 };
+  }
   // app.c q8_mul: n ticks of q8 (samples a tick x256) in samples, the device's 32-bit arithmetic exactly
   function q8Mul(n, q8) { return (n * Math.floor(q8 / 256) + Math.floor((n * (q8 & 255) + 128) / 256)) >>> 0; }
   // STATE: what plays and when (app.c). Tick t sounds at sample start + q8Mul(t, q8), start = at - q8Mul(tick, q8)
@@ -255,7 +262,7 @@
     MARKS, PRESETS, DIV_NAME, marking, markingJump, gridDefault, presetApply, presetMatch, meterText, song, setlist,
     check, crc16, pack7, unpack7, frame, parse, toRecord, fromRecord, frames, assembler, toJSON, fromJSON,
     V, hits, barTicks, SND, V_AMP, helloAck: () => frame(T.HELLO_ACK, [VER]),
-    C, SF, LIVE_MINOR, SR, TPB, songFrom, ctrl, q8Mul, decodeState };
+    C, SF, LIVE_MINOR, PING_MINOR, SR, TPB, songFrom, ctrl, q8Mul, decodeState, ping, decodePong };
   if (typeof module === "object" && module.exports) module.exports = MT;
   else root.MT = MT;
 })(typeof window !== "undefined" ? window : globalThis);

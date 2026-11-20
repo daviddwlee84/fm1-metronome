@@ -119,4 +119,30 @@ ok(Cond.points(4)[1].x < 0 && Cond.points(4)[2].x > 0 && Cond.points(3)[1].x > 0
   ok(notes.length === 2 && notes[1].timeStamp - notes[0].timeStamp === 5, "running status, each by its own timestamp");
 }
 
+// ---- 0.5: PING / PONG. The firmware's PONG, and the clock set by round trips: the link's own delay comes out too
+{
+  const pongs = framesIn("expect_sysex", MT.T.PONG);
+  ok(pongs.length === 1, "a PONG in basic.txt");
+  const pg = MT.decodePong(MT.parse(pongs[0]).payload);
+  ok(pg.token === (1 | 2 << 7 | 3 << 14 | 4 << 21) && pg.now > 0, "its token and the FM-1's sample");
+  ok(framesIn("sysex", MT.T.CTRL).map(f => f.join(" ")).includes(MT.ping(pg.token).join(" ")), "the PING in basic.txt");
+  function trial(name, oneWay, jitter, bunch, tol) {   // tol: half the jitter of the best trip left is the bound   // the true page ms = device ms + 5000; a PING a second for 30 s
+    const clk = Live.clock(), r = rng(3);
+    for (let k = 0; k < 30; k++) {
+      const t0 = 5000 + 1000 * k + r() * 50, up = oneWay + r() * jitter, down = oneWay + r() * jitter + (bunch && k % 3 ? 25 : 0);
+      const devMs = t0 + up - 5000;
+      clk.observe(Math.round(devMs * 44.1), t0 + up + down);   // (a STATE's lag would hold the one-way delay)
+      clk.sync(t0, t0 + up + down, Math.round(devMs * 44.1));
+    }
+    const err = Math.abs(clk.offset - 5000);
+    ok(clk.by === "ping" && err < tol, `${name}: the clock within ${tol} ms of the truth, the link's delay out (${err.toFixed(2)} ms, round trip ${clk.rtt.toFixed(1)})`);
+  }
+  trial("USB, 1 ms each way", 1, 1, false, 1);
+  trial("Bluetooth, 12 ms each way, jitter 15", 12, 15, false, 1.5);
+  trial("Bluetooth, two replies in three 25 ms late", 12, 15, true, 3);   // (the STATEs' lag would be 12+ ms off)
+  const lagOnly = Live.clock();
+  lagOnly.observe(44100 * 10, 10000 + 5000 + 12);   // no PONG: the STATEs' lag, the one-way delay in it
+  ok(lagOnly.by === "lag" && Math.abs(lagOnly.offset - 5012) < 0.01, "without PONGs: the STATEs' smallest lag");
+}
+
 console.log(`ok: ${n} checks`);

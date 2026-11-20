@@ -6,7 +6,7 @@ shot boot.png
 # ---- the setlist over USB (0.3): HELLO, then the boot state's setlist out; host/tests check the same frames
 sysex_out
 wait 1100
-expect_sysex F0 7D 4D 54 01 41 01 00 04 00 F7
+expect_sysex F0 7D 4D 54 01 41 01 00 05 00 F7
 sysex F0 7D 4D 54 01 01 01 F7
 sysex_out
 sysex F0 7D 4D 54 01 04 F7
@@ -554,3 +554,21 @@ tap REC
 turn K4 1
 expect ble_off 0
 tap REC
+
+# ---- 0.5: PING (06 07, 4 bytes) is answered at once with PONG 47: the same 4 bytes, then the sample now (packed);
+# it changes nothing and asks no STATE (host/tests and web/tests decode this PONG)
+sysex F0 7D 4D 54 01 01 01 F7
+wait 50
+count_reset
+sysex_out
+sysex F0 7D 4D 54 01 06 07 01 02 03 04 F7
+wait 20
+expect pongs 1
+expect_sysex F0 7D 4D 54 01 47 01 02 03 04 01 30 15 42 00 F7
+expect running 0
+# SET EDIT: the footer turns between its hints; the second says where Bluetooth is
+tap REC
+wait 3100
+shot set_edit_bt_hint.png
+tap REC
+expect edit 0

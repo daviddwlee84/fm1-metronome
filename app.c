@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* METRONOME v0.4: SET, GRID and CLASSIC (see app.h); the setlist to and from a computer, and a live link a web page
+/* METRONOME v0.5: SET, GRID and CLASSIC (see app.h); the setlist to and from a computer, and a live link a web page
  * plays along with (STATE out, CTRL in), over USB or Bluetooth. What sounds when is metro.c.
  *
  * Time: the audio's sample count is the clock, as in RHYTHM. The render plays every click on its exact sample (a
@@ -14,7 +14,7 @@
 #include "hostlink.c"
 
 #define FW_MAJOR 0
-#define FW_MINOR 4
+#define FW_MINOR 5
 #define SR 44100u
 
 /* ---------------------------------------------------------------- settings --- */
@@ -548,7 +548,8 @@ static void edited(uint32_t r)           /* the active song changed: play it so,
  *   F0 7D 4D 54 <ver=1> <type> <payload...> F7   ("MT"; every payload byte 7-bit)
  * device -> host: HELLO 41 (proto, fw major, fw minor, transport), HEARTBEAT 42 (proto, transport),
  *                 SET 44 (index, count, chunk 7-bit packed), SET_DONE 45 (0 loaded, 1 declined, 2 refused),
- *                 STATE 46 (0.4: 48 bytes 7-bit packed, below)
+ *                 STATE 46 (0.4: 48 bytes 7-bit packed, below), PONG 47 (0.5: the PING's 4 bytes, then the sample
+ *                 now, 4 bytes 7-bit packed)
  * host -> device: HELLO_ACK 01, SET_REQ 04, SET_LOAD 05 (as SET), CTRL 06 (0.4: op, args; below)
  * The record: a format byte, the active song, the switch, the page, 16 songs of 28 bytes field by field, a
  * CRC-16/CCITT-FALSE (low byte first). A setlist that comes in waits on the screen for PLAY.
@@ -561,10 +562,13 @@ static void edited(uint32_t r)           /* the active song changed: play it so,
  *   a tick a twelfth of a beat), 44..47 the sample now (when it was sent); u32 low byte first, 44.1 kHz samples.
  * While a switch waits a second STATE (flag 4) follows the first with it. Stopped: flags 0, the active song's.
  * CTRL: 1 START, 2 STOP, 3 PICK song, 4 BPM lo7 hi7, 5 MUTE 0/1 (the clicks off here: the page sounds them; off by
- *   itself when the computer goes), 6 STATE? (one now). As the keys do it; while a question waits only STOP, STATE?. */
+ *   itself when the computer goes), 6 STATE? (one now). As the keys do it; while a question waits only STOP, STATE?.
+ *   7 PING t0 t1 t2 t3 (0.5): answered at once with PONG, the same 4 bytes and the sample now, so the page times the
+ *   round trip and puts the FM-1's clock on its own as NTP does (half the round trip each way); STATE's smallest lag
+ *   stays the fallback. A PING changes nothing and asks no STATE. */
 enum { T_HELLO_ACK = 0x01, T_SET_REQ = 0x04, T_SET_LOAD = 0x05, T_CTRL = 0x06,
-       T_HELLO = 0x41, T_HEARTBEAT = 0x42, T_SET = 0x44, T_SET_DONE = 0x45, T_STATE = 0x46 };
-enum { C_START = 1, C_STOP, C_PICK, C_BPM, C_MUTE, C_STATE };
+       T_HELLO = 0x41, T_HEARTBEAT = 0x42, T_SET = 0x44, T_SET_DONE = 0x45, T_STATE = 0x46, T_PONG = 0x47 };
+enum { C_START = 1, C_STOP, C_PICK, C_BPM, C_MUTE, C_STATE, C_PING };
 enum { SF_RUN = 1, SF_MUTE = 2, SF_NEXT = 4, SF_NOW = 8 };
 #define ST_N 48u
 enum { SD_LOADED, SD_DECLINED, SD_BAD };
@@ -584,7 +588,7 @@ static struct {
 } xfer;
 static struct {
     uint8_t seq;
-    uint32_t sent_at, states, ctrls;     /* the last STATE; STATEs sent, CTRLs taken (checks) */
+    uint32_t sent_at, states, ctrls, pongs;   /* the last STATE; STATEs sent, CTRLs taken, PONGs sent (checks) */
 } live;
 
 static uint16_t crc16(const uint8_t *p, uint32_t n)   /* CRC-16/CCITT-FALSE */
@@ -808,9 +812,23 @@ static void mute_set(int on)
 static void key_play(void);
 static void song_try(int w);
 
+static void pong(const uint8_t *tok)     /* PING's answer: its 4 bytes, the sample now (as STATE counts it) */
+{
+    uint8_t b[4], f[4 + 5];
+    uint32_t i;
+    put32(b, now_smp());
+    for (i = 0; i < 4u; i++) f[i] = tok[i] & 0x7Fu;
+    (void)pack7(b, 4, f + 4);
+    if (hl_send(&link, T_PONG, f, sizeof f) == 0) live.pongs++;
+}
+
 static void ctrl_in(const uint8_t *d, uint32_t len)   /* the page's hand on the transport, as the keys do it */
 {
     int op = len ? d[0] : 0;
+    if (op == C_PING) {                  /* (timing only: nothing changes, no STATE) */
+        if (len >= 5u) pong(d + 1);
+        return;
+    }
     live.ctrls++;
     if ((ui.ask || ui.confirm_until) && op != C_STOP && op != C_STATE) { st_due = st_now = 1; return; }
     if (op == C_START) { if (!ui.running) key_play(); }
@@ -1403,10 +1421,13 @@ static void draw_footer(void)
         cv_text(x + 8, 7, &FONT_B, ui.toast[1], C_HI);
     } else {
         const char *h;
-        if (rec.page == PG_SET) h = ui.edit ? "KEY: PICK, TAP   SEL+KEY: DEL   HOLD SEL: DEL ALL" : "KEY: SONG   REC: EDIT   K2: TEMPO MARK";
+        if (rec.page == PG_SET && ui.edit)   /* two hints, 3 s each: the second shows where Bluetooth is (0.5) */
+            h = plat_ms() / 3000u % 2u ? (!FM1B_BLE ? "K4: BLUETOOTH (NOT IN THIS BUILD)" : bt_off() ? "K4: BLUETOOTH ON   (NOW OFF)" : "K4: BLUETOOTH OFF   (NOW ON)")
+                                       : "KEY: PICK, TAP   SEL+KEY: DEL   HOLD SEL: DEL ALL";
+        else if (rec.page == PG_SET) h = "KEY: SONG   REC: EDIT   K2: TEMPO MARK";
         else if (CUR->mode == MT_GRID) h = "K1 BEATS  K2 DIV  K3 METER  SEL CLASSIC";
         else h = "K1-K4: MIX   OCT: BEAT   SEL: GRID";
-        cv_text(8, 10, &FONT_T, h, C_DIM);
+        cv_text(8, 10, &FONT_T, h, h[0] == 'K' && h[1] == '4' ? C_AMB : C_DIM);   /* (the Bluetooth hint stands out) */
     }
     cv_blit(0, 208);
 }
@@ -1488,6 +1509,12 @@ void app_frame(void)
         last_step = st;
     }
     if (ui.running && now - ui.anim_at >= 33u) ui.redraw |= R_ANIM;   /* the pendulum, ~30 frames a second */
+    {                                    /* SET EDIT's footer turns between its two hints */
+        static uint32_t last_hint;
+        uint32_t hint = now / 3000u;
+        if (rec.page == PG_SET && ui.edit && hint != last_hint) ui.redraw |= R_FOOT;
+        last_hint = hint;
+    }
     if ((ui.toast_until && now >= ui.toast_until) != last_toast) {
         last_toast = ui.toast_until && now >= ui.toast_until;
         ui.redraw |= R_FOOT;
@@ -1560,6 +1587,7 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "confirm")) *got = ui.confirm_until != 0;
     else if (!strcmp(what, "states")) *got = (int)live.states;   /* STATEs sent */
     else if (!strcmp(what, "ctrls")) *got = (int)live.ctrls;
+    else if (!strcmp(what, "pongs")) *got = (int)live.pongs;
     else if (!strcmp(what, "muted")) *got = au_mute;
     else if (!strcmp(what, "host")) *got = hl_host(&link, plat_ms());
     else if (!strcmp(what, "transport")) *got = link.transport;

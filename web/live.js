@@ -5,7 +5,9 @@
 //   - Clock: the FM-1's sample count against the page's ms. Each STATE says when it was sent (its "now"); it came
 //     then or later, so the smallest lag over the last few seconds is the offset (USB's and Bluetooth's jitter and
 //     bunching fall out; the clocks' drift is followed as old lags age out). Always by the message's timeStamp, never
-//     by when the page got round to reading it.
+//     by when the page got round to reading it. That offset still holds the link's one-way delay; with 0.5's PING
+//     the page times round trips instead and takes half of the shortest each way (as NTP does), which leaves only a
+//     difference between the two ways, and uses that while it has one.
 //   - Plan: what plays (the segment) and the switch waiting (the next one), each a song, its anchor and q8, as the
 //     FM-1's render plays them; ticks(from, to) lists the ticks to sound between two FM-1 times.
 // Loads in a page (window.MTLive) and in node (web/tests/live_test.js).
@@ -28,22 +30,38 @@
   }
 
   function clock(windowMs) {
-    const win = windowMs || 8000, seen = [];   // [arrived ms, lag ms]
+    const win = windowMs || 8000, seen = [], trips = [];   // [arrived ms, lag ms]; [back ms, round trip, offset]
     const ext = unwrapper();
     const C = {
       offset: null,                            // page ms = device ms + offset
+      by: null,                                // "ping" (round trips) or "lag" (STATEs' smallest lag)
+      rtt: null,                               // the shortest round trip in the window, ms
       ext,
       observe(devNow, arrivedMs) {
         const devMs = ext(devNow) / SR * 1000, lag = arrivedMs - devMs;
         seen.push([arrivedMs, lag]);
         while (seen.length > 1 && arrivedMs - seen[0][0] > win) seen.shift();
-        C.offset = Math.min(...seen.map(x => x[1]));
-        return C.offset;
+        return settle(arrivedMs);
       },
-      reset() { seen.length = 0; C.offset = null; },
+      // a PING sent at t0, its PONG back at t1 (page ms), the FM-1's sample when it answered
+      sync(t0, t1, devNow) {
+        const devMs = ext(devNow) / SR * 1000;
+        trips.push([t1, t1 - t0, (t0 + t1) / 2 - devMs]);
+        while (trips.length > 1 && t1 - trips[0][0] > win) trips.shift();
+        return settle(t1);
+      },
+      reset() { seen.length = trips.length = 0; C.offset = C.by = C.rtt = null; },
       toPage(devSamples) { return devSamples / SR * 1000 + C.offset; },   // an extended sample -> page ms
       toDevice(pageMs) { return (pageMs - C.offset) / 1000 * SR; },
     };
+    function settle(now) {
+      const fresh = trips.filter(t => now - t[0] <= win * 2);
+      if (fresh.length) {
+        const best = fresh.reduce((a, b) => (b[1] < a[1] ? b : a));
+        C.offset = best[2]; C.by = "ping"; C.rtt = best[1];
+      } else if (seen.length) { C.offset = Math.min(...seen.map(x => x[1])); C.by = "lag"; C.rtt = null; }
+      return C.offset;
+    }
     return C;
   }
 

@@ -3,7 +3,8 @@
 // system setup), the same frames either way. After MORSE's page (same author): the port is found by what it says
 // (HELLO / HEARTBEAT once a second), not by its name; USB wins when both answer; Bluetooth's packets are timed by
 // their BLE-MIDI timestamps (the FM-1's clock), mapped onto this page's. Every HELLO and HEARTBEAT is answered here.
-//   const link = MTLink.create({ onFrame(m, timeStamp), onStatus(text, kind), onConnect(link), onLost(link) })
+//   const link = MTLink.create({ onFrame(m, timeStamp, raw, arrived), onStatus(text, kind), onConnect(link), onLost(link) })
+//   (timeStamp: when it was sent, as well as the link can tell; arrived: when it reached this page, for round trips)
 //   link.usb(); link.ble(); link.send(frame); link.firmware ([major, minor]); link.via ("USB" / "Bluetooth")
 // blePackets and bleParser are pure (web/tests). Loads in a page (window.MTLink) and in node.
 "use strict";
@@ -55,7 +56,7 @@
         // the packet came when its newest message was sent, or later: the smallest such lag is the clocks' offset
         const newest = unwrap(got[got.length - 1][1], arrived);
         if (off === null || arrived - newest < off) off = arrived - newest;
-        return got.map(([m, t]) => ({ data: Uint8Array.from(m), timeStamp: unwrap(t, arrived) + off }));
+        return got.map(([m, t]) => ({ data: Uint8Array.from(m), timeStamp: unwrap(t, arrived) + off, arrived }));
       },
     };
   }
@@ -89,7 +90,7 @@
           if (h.onConnect) h.onConnect(L);
         }
       }
-      if (h.onFrame) h.onFrame({ type: d[5], payload: d.slice(6, d.length - 1) }, e.timeStamp, d);
+      if (h.onFrame) h.onFrame({ type: d[5], payload: d.slice(6, d.length - 1) }, e.timeStamp, d, e.arrived ?? e.timeStamp);
     }
     function outputFor(i) {
       const outs = [...midi.outputs.values()];
