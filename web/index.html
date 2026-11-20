@@ -1,7 +1,8 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- METRONOME for the M-VAVE FM-1: the setlist editor. Edit 16 songs, hear them here, save them as a file, and send
-     them to an FM-1 running METRONOME 0.3 or newer (Web MIDI with SysEx, Chrome or Edge). The wire and the file are
+     them to an FM-1 running METRONOME 0.3 or newer (Web MIDI with SysEx, Chrome or Edge; 0.4 also over Web Bluetooth,
+     link.js). The wire and the file are
      setlist.js, the same as host/fm1_metronome and the firmware. -->
 <html lang="en">
 <head>
@@ -77,11 +78,12 @@
   <h1>METRONOME setlist</h1>
   <p class="lead">Plan the 16 songs of an <a href="https://github.com/daviddwlee84/fm1-metronome">M-VAVE FM-1 running METRONOME</a>
     here, hear them, save them as a file, and send them to the device. ·
-    <a href="cheatsheet.html">cheatsheet</a> · <a href="try/">try it in the browser</a></p>
+    <a href="live/">live: play along, a conductor</a> · <a href="cheatsheet.html">cheatsheet</a> · <a href="try/">try it in the browser</a></p>
 
   <section>
     <div class="row">
       <button id="connect" class="primary">Connect the FM-1</button>
+      <button id="connect-ble" hidden>Over Bluetooth</button>
       <button id="read" disabled>Read from the FM-1</button>
       <button id="send" disabled>Send to the FM-1</button>
       <span class="dim">|</span>
@@ -90,7 +92,8 @@
       <button id="clear">Clear all</button>
     </div>
     <div id="status">Editing here needs no FM-1. To read or send: METRONOME 0.3 or newer, a USB data cable, Chrome or
-      Edge (allow MIDI with SysEx when asked), and no other program holding its MIDI port.</div>
+      Edge (allow MIDI with SysEx when asked), and no other program holding its MIDI port. Over Bluetooth: METRONOME
+      0.4 or newer.</div>
   </section>
 
   <section>
@@ -169,6 +172,7 @@
   <p class="dim">METRONOME is free software (GPL-3.0-or-later), built on fm1-base. Not made by M-VAVE.</p>
 </main>
 <script src="setlist.js"></script>
+<script src="link.js"></script>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -323,50 +327,29 @@ document.addEventListener("keydown", e => {
 });
 
 // ---------------------------------------------------------------- the FM-1 ---
-let out = null, inp = null, firmware = "", asm = null, onDone = null;
-function send(f) { out.send(f); }
-function onMessage(e) {
-  let m;
-  try { m = MT.parse(Array.from(e.data)); } catch (err) { status(err.message, "bad"); return; }
-  if (!m) return;
-  if (m.type === MT.T.HELLO || m.type === MT.T.HEARTBEAT) {
-    if (m.type === MT.T.HELLO && m.payload.length >= 3) firmware = `${m.payload[1]}.${m.payload[2]}`;
-    send(MT.helloAck());
-    if (!$("read").disabled) return;
+// link.js: over USB or Bluetooth, found by what it says; HELLO and HEARTBEAT answered there
+let asm = null, onDone = null;
+const link = MTLink.create({
+  onStatus: status,
+  onConnect(L) {
+    const fw = L.firmware ? `METRONOME ${L.firmware[0]}.${L.firmware[1]}` : "METRONOME";
     $("read").disabled = $("send").disabled = false;
-    status(`Connected: METRONOME ${firmware} on "${inp.name}".`, "ok");
-  } else if (m.type === MT.T.SET && asm) {
-    try { const s = asm.a.feed(m.payload); if (s) asm.done(s); } catch (err) { asm.fail(err.message); }
-  } else if (m.type === MT.T.SET_DONE && onDone) onDone(m.payload[0]);
-}
-function hunt(access) {   // the port that speaks METRONOME (macOS may still call it "Felucca" after an earlier firmware)
-  const ins = [...access.inputs.values()];
-  if (!ins.length) { status("No MIDI inputs. Connect the FM-1 by a USB data cable.", "bad"); return; }
-  let found = false;
-  for (const i of ins) {
-    i.onmidimessage = e => {
-      let m = null;
-      try { m = MT.parse(Array.from(e.data)); } catch (err) { /* another version */ }
-      if (found || !m) return;
-      found = true; inp = i;
-      out = [...access.outputs.values()].find(o => o.name === i.name && o.manufacturer === i.manufacturer)
-        || [...access.outputs.values()].find(o => o.name === i.name);
-      for (const j of ins) if (j !== i) j.onmidimessage = null;
-      i.onmidimessage = onMessage;
-      onMessage(e);
-    };
-  }
-  status("Listening for METRONOME on " + ins.map(i => `"${i.name}"`).join(", ") + "…");
-  setTimeout(() => { if (!found) status("No FM-1 running METRONOME 0.3 or newer heard. Is it on, on USB, and is no other program (a DAW, M-Flasher, another tab) holding its port?", "bad"); }, 3000);
-}
-$("connect").onclick = () => {
-  if (!navigator.requestMIDIAccess) { status("This browser has no Web MIDI (Safari, and every browser on iPhone and iPad). Use Chrome or Edge on a computer to read or send; editing and files work here.", "bad"); return; }
-  navigator.requestMIDIAccess({ sysex: true }).then(a => { hunt(a); a.onstatechange = () => { if (!inp) hunt(a); }; },
-    () => status("MIDI access was refused (SysEx must be allowed for this page).", "bad"));
-};
+    status(`Connected: ${fw} over ${L.via}${L.via === "USB" ? ` ("${L.name}")` : ""}.`, "ok");
+  },
+  onLost() { $("read").disabled = $("send").disabled = true; },
+  onFrame(m) {
+    if (m.type === MT.T.SET && asm) {
+      try { const s = asm.a.feed(m.payload); if (s) asm.done(s); } catch (err) { asm.fail(err.message); }
+    } else if (m.type === MT.T.SET_DONE && onDone) onDone(m.payload[0]);
+  },
+});
+function send(f) { link.send(f); }
+$("connect").onclick = () => link.usb();
+$("connect-ble").onclick = () => link.ble();
+if (link.bleAvailable) $("connect-ble").hidden = false;
 $("read").onclick = () => {
   if (dirty && !confirm("Replace the setlist here with the FM-1's? (Save it first if you want to keep it.)")) return;
-  const timer = setTimeout(() => asm && asm.fail("no answer"), 5000);
+  const timer = setTimeout(() => asm && asm.fail("no answer"), link.via === "Bluetooth" ? 15000 : 5000);
   asm = { a: MT.assembler(),
     fail(msg) { clearTimeout(timer); asm = null; status(`Not read: ${msg}.`, "bad"); },
     done(s) { clearTimeout(timer); asm = null; S = s; cur = S.active; dirty = false; keep(); draw(); status(`Read ${S.songs.filter(x => x.used).length} songs from the FM-1.`, "ok"); } };
@@ -375,7 +358,7 @@ $("read").onclick = () => {
 $("send").onclick = async () => {
   try {
     const fr = MT.frames(S);
-    for (const f of fr) { send(f); await new Promise(r => setTimeout(r, 30)); }   // the FM-1 takes one frame at a time
+    for (const f of fr) { send(f); await new Promise(r => setTimeout(r, link.pace())); }   // the FM-1 takes one frame at a time
     status("Sent. On the FM-1: PLAY loads it, HOME keeps what is there.");
     onDone = a => { onDone = null; if (a === 0) dirty = false; status(["Loaded on the FM-1.", "Declined on the FM-1.", "Refused: the FM-1 found it damaged."][a] || `Answer ${a}.`, a === 0 ? "ok" : "bad"); };
   } catch (err) { status(`Not sent: ${err.message}.`, "bad"); }

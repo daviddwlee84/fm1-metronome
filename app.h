@@ -6,7 +6,9 @@
  * triplet and sixteenth layers mixed on K1-K4, the accent every BEAT beats. Tap tempo on the black keys.
  * The timing and the patterns are metro.c (platform-free). Built on fm1-base (MPL-2.0, its headers). This app is
  * GPL-3.0-or-later; common/ (ledfx, hostlink) is MIT.
- * v0.3: the setlist to a JSON file and back over USB (SysEx "MT", app.c), with a web editor. */
+ * v0.3: the setlist to a JSON file and back over USB (SysEx "MT", app.c), with a web editor.
+ * v0.4: the live link (STATE out, CTRL in: a web page plays along, sounds the clicks, starts, stops and picks songs),
+ * over USB or Bluetooth MIDI (SET EDIT K4). */
 #pragma once
 #include <stdint.h>
 #include "plat.h"
@@ -22,6 +24,11 @@
  * just emu-rehearse before a flash. The panel calibration is the platform's */
 enum { OBJ_PANEL, OBJ_METRO, OBJ_NOBJ };
 #define APP_STORE_MAP {0xDC000u, 0xCE000u}
+/* Bluetooth's record is kept by the app, in RAM only (app.c app_ble_load / app_ble_save): nothing of it is written.
+ * Whether it starts at power-on: SET EDIT K4, read from the record before app_init */
+#define APP_BLE_STORE
+int metro_ble_off(void);
+#define APP_BLE_AT_BOOT (!metro_ble_off())
 
 void app_init(void);
 void app_render(int32_t *lr, uint32_t n, uint32_t master_q12);
@@ -32,7 +39,7 @@ void app_input_only(void);
 void app_say(const char *a, const char *b);
 void app_tick(void);
 
-#define APP_SYSEX                        /* the setlist's frames from the computer (host/, web/) */
+#define APP_SYSEX                        /* the computer's frames over USB: the setlist, the live link (host/, web/) */
 int app_sysex(const uint8_t *p, uint32_t n);
 
 /* host simulator: checks (page, active, bpm, used, step3, n_accent, ...) */

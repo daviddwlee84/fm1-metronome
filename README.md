@@ -8,7 +8,9 @@ meter, step pattern and sound; press a key and the next song starts at the next 
 hear them, save them as a file, and send them to the FM-1 over USB (Chrome or Edge; editing and files work in any
 browser). No FM-1 at hand? **[Try it in the browser](https://daviddwlee84.github.io/fm1-metronome/web/try/)** (the
 [fm1-emu](https://github.com/joakimeriksson/fm1-emu) emulator). Every page and control on one sheet:
-**[cheatsheet](https://daviddwlee84.github.io/fm1-metronome/web/cheatsheet.html)**.
+**[cheatsheet](https://daviddwlee84.github.io/fm1-metronome/web/cheatsheet.html)**. Playing along (0.4):
+**[live](https://daviddwlee84.github.io/fm1-metronome/web/live/)**, a conductor beating the song's meter, the clicks
+from the computer, and the transport, over USB or Bluetooth.
 
 ![METRONOME on the FM-1](docs/screen.png)
 
@@ -37,7 +39,7 @@ browser). No FM-1 at hand? **[Try it in the browser](https://daviddwlee84.github
 | Page | Controls |
 |---|---|
 | SET | white key: play that song (while playing: at the next bar, the key blinks until then); `OCT-` / `OCT+` tempo ±5; `K1` switch songs at the NEXT BAR or NOW; `K2` jump to the next tempo marking; `REC` EDIT |
-| SET: EDIT | white key: pick it (an empty one starts as a copy), press it again on the beat to tap its tempo; `SEL` + key: clear it; `SEL` held 2 s: CLEAR ALL? (`PLAY` yes); `REC` leave |
+| SET: EDIT | white key: pick it (an empty one starts as a copy), press it again on the beat to tap its tempo; `SEL` + key: clear it; `SEL` held 2 s: CLEAR ALL? (`PLAY` yes); `K4` Bluetooth on / off; `REC` leave |
 | GRID | white key: a step's level; `K1` beats 1–9; `K2` a beat in quarters / 8ths / triplets / 16ths; `K3` meter presets; `OCT±` tempo ±5; `REC` tap tempo; `SEL` CLASSIC |
 | CLASSIC | `K1`–`K4` the four layers' volumes 0–7; `OCT-` / `OCT+` an accent every 1–9 beats (0 none); any key or `REC` tap tempo; `SEL` GRID |
 
@@ -49,7 +51,7 @@ for `PLAY` or `HOME` and ignores every other key.
 
 ## The setlist on a computer
 
-METRONOME 0.3 and later talk to a computer over USB (SysEx, see `app.c`):
+METRONOME 0.3 and later talk to a computer over USB, 0.4 over Bluetooth too (SysEx, see `app.c`):
 
 - **[The setlist editor](https://daviddwlee84.github.io/fm1-metronome/web/)** (or `web/index.html` from this
   repository, opened from your disk): *Read from the FM-1*, edit, *Send to the FM-1*. Or plan without the FM-1 and
@@ -63,6 +65,25 @@ METRONOME 0.3 and later talk to a computer over USB (SysEx, see `app.c`):
 
 The file is plain JSON: the stored songs by key, each with its tempo, sound, GRID steps (`. g N A` for off, ghost,
 normal, accent) and CLASSIC mix. The FM-1 shows how many songs arrived and loads them only after `PLAY`.
+METRONOME 0.4 does the same over Bluetooth (`SET EDIT`, `K4`: on by default), with *Over Bluetooth* on the page.
+
+## Playing along (0.4)
+
+**[The live page](https://daviddwlee84.github.io/fm1-metronome/web/live/)** follows the FM-1 over USB or Bluetooth:
+
+- a conductor beating the song's meter (6/8 in 2, 12/8 in 4, 5/8 3+2 long and short, 7/8 2+2+3 in 3, CLASSIC by its
+  accent), the tempo, its marking, the bar and the beat;
+- *Start*, *Stop*, the 16 songs (a press there is a press on the FM-1's key), the tempo;
+- *Clicks from this computer*: the page sounds them, the FM-1 falls silent (`MUTE` on its header) until the page lets
+  go. If the computer goes (the cable out, the page closed, Bluetooth lost), the FM-1 sounds again by itself: a
+  stage never goes quiet because of the computer.
+
+The FM-1 does not send a message a beat. It says what plays and when (a STATE: the song, a tick and the sample it
+sounds at, the tempo) when that changes and once a second, and the page counts the beats on its own clock, so USB's
+jitter (a few ms) and Bluetooth's (tens of ms, in bunches) never reach the beat. What is left is a fixed delay:
+*Tap along to calibrate* on the page takes it out. `python -m fm1_metronome watch` prints the STATEs.
+
+![the live page](docs/screens/live_page.png)
 
 ## Screens
 
@@ -73,6 +94,7 @@ From fm1-base's host simulator (`tests/basic.txt`).
 | ![SET](docs/screens/set_playing.png) SET, playing | ![marking](docs/screens/set_marking.png) `K2`: a tempo marking | ![pending](docs/screens/set_pending.png) the next song waits for the bar |
 | ![GRID](docs/screens/grid.png) GRID, 4/4 eighths | ![6/8](docs/screens/grid_6_8.png) GRID 6/8 | ![7/8](docs/screens/grid_7_8.png) `K3`: 7/8 2+2+3 |
 | ![CLASSIC](docs/screens/classic.png) CLASSIC | ![clear](docs/screens/set_clear_ask.png) CLEAR ALL? | ![load](docs/screens/load_ask.png) a setlist from the computer |
+| ![mute](docs/screens/live_mute.png) the page sounds the clicks (0.4) | ![bt](docs/screens/live_bt_off.png) `K4`: Bluetooth off | |
 
 ## Install
 
@@ -105,17 +127,18 @@ cd build/host && ./metronome_host ../../tests/basic.txt . && cd ../..
 cc -std=c99 -Wall -Wextra -o /tmp/metro_test tests/metro_test.c && /tmp/metro_test   # the platform-free core
 PYTHONPATH=host python -m pytest -q host/tests     # the computer side (frames shared with tests/basic.txt)
 node web/tests/setlist_test.js                     # the web page's setlist.js (the same frames)
+node web/tests/live_test.js                        # the live link, the conductor, Bluetooth's packets
 python3 fm1-base/tools/build.py .                  # the device package (JieLi toolchain: fm1-base's README)
 ```
 
 | File | What |
 |---|---|
 | `metro.c` | platform-free: what sounds on each tick (GRID's steps, CLASSIC's layers), tap tempo, tempo markings, meter presets |
-| `app.c` | the pages, input, LEDs, the click synth on its exact sample, storage, the setlist over USB |
+| `app.c` | the pages, input, LEDs, the click synth on its exact sample, storage, the setlist and the live link (USB, Bluetooth) |
 | `common/` | hostlink (SysEx with a host) and ledfx (LED patterns), MIT |
 | `tests/` | `metro_test.c` for the core, `basic.txt` for fm1-base's host simulator |
 | `host/` | `fm1_metronome`: the setlist to a JSON file and back (Python), with its tests |
-| `web/` | `index.html` (the setlist editor), `setlist.js` (its wire and file, tested in `web/tests/`), `cheatsheet.html`, `try/` (fm1-emu), `words/` (the screen reader's words) |
+| `web/` | `index.html` (the setlist editor), `live/` (playing along), `setlist.js` (the wire and the file), `link.js` (USB and Bluetooth), `live.js` (the live link's timing), `conductor.js`, all tested in `web/tests/`; `cheatsheet.html`, `try/` (fm1-emu), `words/` (the screen reader's words) |
 | `docs/` | `screen.png` (the Hub's card), `screens/` (this page) |
 
 Design notes (Traditional Chinese) and development live in

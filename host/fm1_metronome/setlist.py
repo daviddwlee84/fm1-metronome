@@ -91,6 +91,11 @@ def to_record(s: Setlist) -> bytes:
     return bytes(b)
 
 
+def song_from(d: bytes) -> Song:
+    """A song's 28 bytes (the record's, STATE's) as a Song (unchecked)."""
+    return Song(bool(d[0]), d[1], d[2] | d[3] << 8, d[4], d[5], d[6], d[7], list(d[8:12]), list(d[12:28]))
+
+
 def from_record(b: bytes) -> Setlist:
     if len(b) != RECORD_N:
         raise SetlistError(f"{len(b)} bytes, not {RECORD_N}")
@@ -104,7 +109,7 @@ def from_record(b: bytes) -> Setlist:
         d = b[4 + i * SONG_N:4 + (i + 1) * SONG_N]
         if d[0] > 1:
             raise SetlistError(f"song {i + 1}: used = {d[0]}")
-        songs.append(Song(bool(d[0]), d[1], d[2] | d[3] << 8, d[4], d[5], d[6], d[7], list(d[8:12]), list(d[12:28])))
+        songs.append(song_from(d))
     s = Setlist(songs, b[1], bool(b[2]), b[3])
     if b[2] > 1:
         raise SetlistError(f"switch = {b[2]}")
