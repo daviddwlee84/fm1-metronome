@@ -78,6 +78,8 @@ From fm1-base's host simulator (`tests/basic.txt`).
 
 Back up your FM-1's flash first ([M-Flasher](https://github.com/jvitkauskas/m-flasher)).
 
+- From [The Firmware Hub](https://thefirmwarehub.com/firmware/metronome/): install it from the browser over USB
+  (Chrome or Edge); each new release shows up there by itself.
 - From a release: download `metronome-X.Y.fwsc` from
   [Releases](https://github.com/daviddwlee84/fm1-metronome/releases) and install it with M-Flasher, or over
   USB-MIDI with fm1-base's `tools/fm1_install.py metronome-X.Y.fwsc`.

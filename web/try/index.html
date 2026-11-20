@@ -1,9 +1,8 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- METRONOME for the M-VAVE FM-1, tried in the browser: fm1-emu (github.com/joakimeriksson/fm1-emu) runs the release
-     package itself in WebAssembly. Until The Firmware Hub lists it, the package comes from this repository's own
-     GitHub Pages (PKG below, served with CORS); once listed, ?fw=<hub id> follows each release. &embed=1 shows only
-     the synth and its controls. -->
+     package itself in WebAssembly. ?fw=metronome is the package The Firmware Hub lists (since 2026-11-19), so this
+     page follows each release by itself. &embed=1 shows only the synth and its controls. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -42,10 +41,13 @@
     click the synth once so it hears your keyboard. Back to the <a href="../">setlist editor</a> ·
     <a href="../cheatsheet.html">cheatsheet</a> · <a href="https://github.com/daviddwlee84/fm1-metronome">source</a>.</p>
 
-  <iframe class="emu" id="emu" title="METRONOME in the FM-1 emulator" allow="autoplay; midi"></iframe>
+  <iframe class="emu" id="emu" title="METRONOME in the FM-1 emulator" allow="autoplay; midi"
+          src="https://joakimeriksson.github.io/fm1-emu/?fw=metronome&amp;embed=1"></iframe>
   <div class="row">
     <button id="reload" type="button">Reload the emulator</button>
-    <a id="full">Open it full page</a>
+    <a id="full" href="https://joakimeriksson.github.io/fm1-emu/?fw=metronome">Open it full page</a>
+    <span class="dim">Says <code>metronome-….fwsc: 404</code>? A new release has just replaced the package: reload,
+      or try again in ten minutes.</span>
   </div>
 
   <div class="cols">
@@ -83,13 +85,10 @@
 </main>
 <script>
 "use strict";
-// the package: this site's copy of the newest release (web/try/metronome.fwsc); after the Hub lists METRONOME,
-// SRC becomes https://joakimeriksson.github.io/fm1-emu/?fw=<hub id>
-const PKG = new URL("metronome.fwsc", location.href).href;
-const BASE = `https://joakimeriksson.github.io/fm1-emu/?package=${encodeURIComponent(PKG)}&name=metronome&chip=uc25hq80`;
-document.getElementById("emu").src = `${BASE}&embed=1`;
-document.getElementById("full").href = BASE;
-document.getElementById("reload").onclick = () => { document.getElementById("emu").src = `${BASE}&embed=1&t=${Date.now()}`; };
+const SRC = "https://joakimeriksson.github.io/fm1-emu/?fw=metronome&embed=1";
+document.getElementById("reload").onclick = () => {   // the frame loaded again (its catalog read may still be cached)
+  document.getElementById("emu").src = `${SRC}&t=${Date.now()}`;
+};
 </script>
 </body>
 </html>
