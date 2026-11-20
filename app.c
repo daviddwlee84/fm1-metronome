@@ -32,15 +32,21 @@ typedef struct {
     uint8_t page;                        /* PG_* */
     uint8_t active;                      /* the song on, 0..MT_NSLOT-1 */
     uint8_t swap_now;                    /* SET: another song starts 0 at the next bar, 1 at once */
-    uint8_t flags;                       /* bit 0: Bluetooth off (SET EDIT K4); the rest 0. (0.3 and before: a spare
-                                          * byte, always 0, so an older record reads as Bluetooth on) */
+    uint8_t flags;                       /* bit 0: Bluetooth off (SET EDIT K4); bits 1-2 (0.5): one sound for every
+                                          * song, 0 each its own, 1 CLICK, 2 WOOD, 3 BEEP (SET EDIT K3); the rest 0.
+                                          * (0.3 and before: a spare byte, always 0, so an older record reads as
+                                          * Bluetooth on, each song its own sound) */
     mt_slot_t slot[MT_NSLOT];
 } rec_t;
 static rec_t rec;
 static uint32_t saves, dirty_at;
 #define CUR (&rec.slot[rec.active])
 #define F_BT_OFF 1u
+#define F_ALL_SND 6u                     /* (bits 1-2) */
 static int bt_off(void) { return rec.flags & F_BT_OFF; }
+static int all_snd(void) { return (rec.flags & F_ALL_SND) >> 1; }   /* 0, or the sound for all + 1 */
+/* the sound a song plays in: its own, or the one SET EDIT K3 set for all (the songs keep theirs) */
+static uint8_t snd_of(const mt_slot_t *s) { return all_snd() ? (uint8_t)(all_snd() - 1) : s->sound; }
 
 static void defaults(void)
 {
@@ -130,7 +136,7 @@ static void sound(uint32_t t)
     mt_hits(&tr.s, t, &h);
     for (i = 0; i < h.n; i++) {
         uint32_t v = h.v[i];
-        if (!au_mute) voice(SND[tr.s.sound].hz[v], V_AMP[v] * (float)h.vol[i] / (float)MT_VOL_MAX, SND[tr.s.sound].tau);
+        if (!au_mute) voice(SND[snd_of(&tr.s)].hz[v], V_AMP[v] * (float)h.vol[i] / (float)MT_VOL_MAX, SND[snd_of(&tr.s)].tau);
         tr.nv[v]++;
     }
 }
@@ -557,7 +563,8 @@ static void edited(uint32_t r)           /* the active song changed: play it so,
  * STATE: what plays and when, so a page plays along on its own clock instead of a message a beat. Sent when it
  * changes (a start, a stop, a song, a tempo, an edit) and once a second while playing (the two clocks drift apart).
  *   0 seq, 1 flags (1 running, 2 muted, 4 this is the switch waiting, not what plays now, 8 switch NOW),
- *   2 the active song, 3 this segment's song, 4..31 its 28 bytes (as the record's), 32..35 a tick and 36..39 its
+ *   2 the active song, 3 this segment's song, 4..31 its 28 bytes (as the record's, but byte 11, the sound, is the one
+ *   it plays in: 0.5's SET EDIT K3 may set one for all songs), 32..35 a tick and 36..39 its
  *   sample (the segment's anchor: tick t sounds at sample + (t - tick) * q8 / 256), 40..43 q8 (samples a tick x256,
  *   a tick a twelfth of a beat), 44..47 the sample now (when it was sent); u32 low byte first, 44.1 kHz samples.
  * While a switch waits a second STATE (flag 4) follows the first with it. Stopped: flags 0, the active song's.
@@ -589,6 +596,7 @@ static struct {
 static struct {
     uint8_t seq;
     uint32_t sent_at, states, ctrls, pongs;   /* the last STATE; STATEs sent, CTRLs taken, PONGs sent (checks) */
+    uint8_t snd;                         /* the last STATE's sound (checks) */
 } live;
 
 static uint16_t crc16(const uint8_t *p, uint32_t n)   /* CRC-16/CCITT-FALSE */
@@ -773,6 +781,7 @@ static int st_send(int next)
     b[2] = rec.active;
     b[3] = (uint8_t)song;
     song_put(b + 4, &s);
+    b[4 + 7] = live.snd = snd_of(&s);    /* the sound it plays in (SET EDIT K3 may set one for all), as the page should */
     put32(b + 32, tick);
     put32(b + 36, at);
     put32(b + 40, q8);
@@ -850,6 +859,8 @@ static int host_frame(const uint8_t *p, uint32_t n, int transport)
     hl_seen(&link, plat_ms());
     if (type == T_HELLO_ACK) {
         if (!hl_host(&link, plat_ms())) st_due = st_now = 1;   /* a page is here: it learns the state at once */
+        else if (link.transport != transport && au_mute) mute_set(0);   /* (0.5) the link moved (USB to Bluetooth):
+                                          * the mute was the old link's page; one that wants it asks again */
         hl_acked(&link, plat_ms(), transport);
     } else if (type == T_SET_REQ) { xfer.tx_on = 1; xfer.tx_i = 0; }
     else if (type == T_SET_LOAD) sl_in(d, len);
@@ -897,6 +908,14 @@ int metro_ble_off(void)
     static rec_t r;
     if (plat_store_load(OBJ_METRO, &r, sizeof r) != (int)sizeof r || !rec_valid(&r)) return 0;
     return r.flags & F_BT_OFF;
+}
+
+static void all_snd_by(int e)            /* SET EDIT K3: OWN (each song its own sound), CLICK, WOOD, BEEP for all */
+{
+    int a = clamp(all_snd() + (e > 0 ? 1 : -1), 0, MT_NSND);
+    rec.flags = (uint8_t)((rec.flags & ~F_ALL_SND) | (a << 1));
+    app_say("ALL SONGS", a ? SND_NAME[a - 1] : "OWN SOUND");
+    changed(R_ALL);
 }
 
 static void ble_toggle(void)             /* SET EDIT K4 */
@@ -1082,8 +1101,12 @@ static void input(void)
         bpm_by(fast ? 5 * e : e);
     }
     if ((e = plat_enc(EN_ALGO)) != 0) {
+        char t[28];
         CUR->sound = (uint8_t)clamp(CUR->sound + (e > 0 ? 1 : -1), 0, MT_NSND - 1);
-        app_say("SOUND", SND_NAME[CUR->sound]);
+        t[0] = 0;
+        tcat(t, SND_NAME[CUR->sound]);
+        if (all_snd()) tcat(t, ", ALL "), tcat(t, SND_NAME[all_snd() - 1]);   /* (kept; heard once K3 is OWN) */
+        app_say("SOUND", t);
         edited(R_ALL);
     }
     (void)plat_enc(EN_PRESET);
@@ -1094,8 +1117,8 @@ static void input(void)
             changed(R_ALL);
         }
         if ((e = plat_enc(EN_K2)) != 0) marking_by(e);
-        (void)plat_enc(EN_K3);
-        if ((e = plat_enc(EN_K4)) != 0 && ui.edit) ble_toggle();   /* (EDIT only: not by a brush on stage) */
+        if ((e = plat_enc(EN_K3)) != 0 && ui.edit) all_snd_by(e);   /* (EDIT only: not by a brush on stage) */
+        if ((e = plat_enc(EN_K4)) != 0 && ui.edit) ble_toggle();
     } else if (CUR->mode == MT_GRID) {
         if ((e = plat_enc(EN_K1)) != 0) {
             CUR->bpb = (uint8_t)clamp(CUR->bpb + (e > 0 ? 1 : -1), 1, 9);
@@ -1358,8 +1381,9 @@ static void draw_steps(int32_t oy)       /* GRID's bottom: the bar, a column a s
     tcat(t, "   K2 ");
     tcat(t, DIV_NAME[s->div]);
     tcat(t, "   ");
-    tcat(t, SND_NAME[s->sound]);
-    text_c(120, 76 - oy, &FONT_T, t, C_GRAY);
+    if (all_snd()) tcat(t, "ALL ");
+    tcat(t, SND_NAME[snd_of(s)]);
+    text_c(120, 76 - oy, &FONT_T, t, all_snd() ? C_AMB : C_GRAY);
 }
 
 static void draw_mix(int32_t oy)         /* CLASSIC's bottom: the four layers' volumes, K1..K4 */
@@ -1373,10 +1397,10 @@ static void draw_mix(int32_t oy)         /* CLASSIC's bottom: the four layers' v
         text_c(x + 15, 60 - oy, &FONT_T, LAYER_NAME[k], CUR->mix[k] ? C_HI : C_DIM);
     }
     t[0] = 0;
-    tcat(t, "SOUND ");
-    tcat(t, SND_NAME[CUR->sound]);
+    tcat(t, all_snd() ? "SOUND ALL " : "SOUND ");
+    tcat(t, SND_NAME[snd_of(CUR)]);
     text_c(214, 20 - oy, &FONT_T, "K1-K4", C_DIM);
-    text_c(120, 76 - oy, &FONT_T, t, C_GRAY);
+    text_c(120, 76 - oy, &FONT_T, t, all_snd() ? C_AMB : C_GRAY);
 }
 
 static void draw_band(int which)         /* the main area's halves: 0 the top (it moves), 1 the bottom */
@@ -1421,13 +1445,27 @@ static void draw_footer(void)
         cv_text(x + 8, 7, &FONT_B, ui.toast[1], C_HI);
     } else {
         const char *h;
-        if (rec.page == PG_SET && ui.edit)   /* two hints, 3 s each: the second shows where Bluetooth is (0.5) */
-            h = plat_ms() / 3000u % 2u ? (!FM1B_BLE ? "K4: BLUETOOTH (NOT IN THIS BUILD)" : bt_off() ? "K4: BLUETOOTH ON   (NOW OFF)" : "K4: BLUETOOTH OFF   (NOW ON)")
-                                       : "KEY: PICK, TAP   SEL+KEY: DEL   HOLD SEL: DEL ALL";
-        else if (rec.page == PG_SET) h = "KEY: SONG   REC: EDIT   K2: TEMPO MARK";
+        char t[48];
+        uint32_t turn = plat_ms() / 3000u;
+        if (rec.page == PG_SET && ui.edit && turn % 3u == 1u) {   /* three hints, 3 s each (0.5): the keys, K3, K4 */
+            t[0] = 0;
+            tcat(t, "K3: ALL SONGS' SOUND   NOW ");
+            tcat(t, all_snd() ? SND_NAME[all_snd() - 1] : "EACH ITS OWN");
+            h = t;
+        } else if (rec.page == PG_SET && ui.edit && turn % 3u == 2u)
+            h = !FM1B_BLE ? "K4: BLUETOOTH (NOT IN THIS BUILD)" : bt_off() ? "K4: BLUETOOTH ON   (NOW OFF)" : "K4: BLUETOOTH OFF   (NOW ON)";
+        else if (rec.page == PG_SET && ui.edit)
+            h = "KEY: PICK, TAP   SEL+KEY: DEL   HOLD SEL: DEL ALL";
+        else if (rec.page == PG_SET && all_snd() && turn % 2u) {   /* on stage, a sound for all says so, every 6 s */
+            t[0] = 0;
+            tcat(t, "ALL SONGS IN ");
+            tcat(t, SND_NAME[all_snd() - 1]);
+            tcat(t, "   (SET EDIT, K3)");
+            h = t;
+        } else if (rec.page == PG_SET) h = "KEY: SONG   REC: EDIT   K2: TEMPO MARK";
         else if (CUR->mode == MT_GRID) h = "K1 BEATS  K2 DIV  K3 METER  SEL CLASSIC";
         else h = "K1-K4: MIX   OCT: BEAT   SEL: GRID";
-        cv_text(8, 10, &FONT_T, h, h[0] == 'K' && h[1] == '4' ? C_AMB : C_DIM);   /* (the Bluetooth hint stands out) */
+        cv_text(8, 10, &FONT_T, h, h == t || (h[0] == 'K' && h[1] == '4') ? C_AMB : C_DIM);   /* (K3, K4 stand out) */
     }
     cv_blit(0, 208);
 }
@@ -1509,10 +1547,10 @@ void app_frame(void)
         last_step = st;
     }
     if (ui.running && now - ui.anim_at >= 33u) ui.redraw |= R_ANIM;   /* the pendulum, ~30 frames a second */
-    {                                    /* SET EDIT's footer turns between its two hints */
+    {                                    /* SET EDIT's footer turns between its hints (SET's too, with a sound for all) */
         static uint32_t last_hint;
         uint32_t hint = now / 3000u;
-        if (rec.page == PG_SET && ui.edit && hint != last_hint) ui.redraw |= R_FOOT;
+        if (rec.page == PG_SET && (ui.edit || all_snd()) && hint != last_hint) ui.redraw |= R_FOOT;
         last_hint = hint;
     }
     if ((ui.toast_until && now >= ui.toast_until) != last_toast) {
@@ -1593,6 +1631,9 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "transport")) *got = link.transport;
     else if (!strcmp(what, "ble_off")) *got = bt_off();
     else if (!strcmp(what, "flags")) *got = rec.flags;
+    else if (!strcmp(what, "all_sound")) *got = all_snd();   /* 0 each its own, else the sound for all + 1 */
+    else if (!strcmp(what, "play_sound")) *got = snd_of(&tr.s);   /* what the render sounds now */
+    else if (!strcmp(what, "state_sound")) *got = live.snd;
     else return 0;
     return 1;
 }
