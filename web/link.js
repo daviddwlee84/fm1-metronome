@@ -122,7 +122,7 @@
       };
       clearTimeout(hunting);
       hunting = setTimeout(() => {
-        if (!inp) status("No FM-1 running METRONOME answered. Is it on, on USB, and is no other program (a DAW, M-Flasher, another tab) holding its port?", "bad");
+        if (!inp) status("No FM-1 running METRONOME answered. Is it on, on USB, and is no other program (a DAW, M-Flasher, another tab) holding its port? If a page talks to it over Bluetooth, it stays quiet on USB until that page is closed (10 s).", "bad");
       }, 3000);
     }
     L.usb = async () => {
@@ -165,8 +165,17 @@
         await io.startNotifications();
         bleDev = dev; L.name = dev.name || "FM-1";
         L.send = f => { for (const pk of blePackets(f, performance.now())) bleQ = bleQ.then(() => io.writeValueWithoutResponse(Uint8Array.from(pk))); };
-        status("Connected over Bluetooth: waiting for METRONOME's HELLO…", "dim");
-        hunting = setTimeout(() => { if (bleDev === dev && !L.connected) status("Connected, but METRONOME said nothing: is it METRONOME 0.4 or newer, with Bluetooth on (SET EDIT, K4)?", "bad"); }, 3000);
+        status("Connected over Bluetooth: waiting for METRONOME…", "dim");
+        // The FM-1 talks to one computer at a time: while a page or program answers it over USB, it says nothing over
+        // Bluetooth. An answer from here moves it over (hostlink: the link follows the answer), so answer first
+        const ack = [0xF0, ...HEAD, 1, 0x01, 1, 0xF7];
+        let tries = 0;
+        const nudge = () => {
+          if (bleDev !== dev || L.connected) return;
+          if (tries++ < 4) { L.send(ack); hunting = setTimeout(nudge, 1000); return; }
+          status("Connected, but METRONOME said nothing: is it METRONOME 0.4 or newer, with Bluetooth on (SET EDIT, K4)? Close any other page that talks to it over USB.", "bad");
+        };
+        nudge();
       } catch (err) { bleDev = null; idle(); status(`Bluetooth: ${err.message}`, "bad"); }
     };
     L.bleAvailable = typeof navigator !== "undefined" && !!navigator.bluetooth;
