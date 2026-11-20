@@ -1,0 +1,362 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- METRONOME for the M-VAVE FM-1, live: the page plays along with the FM-1 (0.4 or newer) over USB or Bluetooth.
+     The FM-1 says what plays and when (STATE) only when it changes and once a second; this page beats the bar on its
+     own clock (live.js), draws a conductor beating the song's meter (conductor.js), can sound the clicks itself
+     (the FM-1 falls silent until the page lets go or goes away), and starts, stops, picks songs and sets the tempo
+     (CTRL). The link is link.js, the frames setlist.js. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>METRONOME Live</title>
+<meta name="description" content="Play along with an M-VAVE FM-1 running METRONOME: a conductor beating its meter, the clicks from the computer, and its transport, over USB or Bluetooth.">
+<style>
+  :root { --bg: #f6f6f3; --fg: #1b1b1f; --dim: #6b6b73; --card: #ffffff; --line: #dcdcd6; --accent: #b8860b;
+          --hi: #d99a00; --ok: #2f8f4e; --bad: #c0392b; --key: #fbfbf9; --keyfg: #1b1b1f; --lit: #f0c85a; --figure: #3a3a44; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #111114; --fg: #ececf0; --dim: #9a9aa6; --card: #1b1b20; --line: #2c2c34;
+          --accent: #f0c85a; --hi: #f0c85a; --ok: #6bd18f; --bad: #f07a6c; --key: #23232a; --keyfg: #ececf0; --lit: #f0c85a; --figure: #34343e; }
+  }
+  :root[data-theme="dark"] { --bg: #111114; --fg: #ececf0; --dim: #9a9aa6; --card: #1b1b20; --line: #2c2c34;
+          --accent: #f0c85a; --hi: #f0c85a; --ok: #6bd18f; --bad: #f07a6c; --key: #23232a; --keyfg: #ececf0; --lit: #f0c85a; --figure: #34343e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 18px 16px 48px; }
+  h1 { font-size: 1.45rem; margin: 0 0 2px; }
+  h2 { font-size: 1rem; margin: 0 0 8px; }
+  a { color: var(--accent); }
+  .lead, .dim { color: var(--dim); }
+  p { margin: 6px 0; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 12px 0; }
+  button, select, input { font: inherit; color: inherit; }
+  button { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent);
+    cursor: pointer; margin: 3px 6px 3px 0; }
+  button.primary, button.on { background: var(--accent); color: var(--bg); }
+  button:disabled { opacity: .4; cursor: default; }
+  select { padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); }
+  .row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+  #status { padding: 6px 10px; border-left: 3px solid var(--line); margin: 8px 0 0; font-size: .93em; }
+  #status.ok { border-color: var(--ok); } #status.bad { border-color: var(--bad); }
+  .stage { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(280px, 1.3fr); gap: 14px; align-items: stretch; }
+  @media (max-width: 760px) { .stage { grid-template-columns: 1fr; } }
+  .readout { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 10px 6px; border-radius: 10px;
+    transition: background-color 60ms; }
+  .readout.flash { background: color-mix(in srgb, var(--ok) 22%, transparent); }
+  .readout.flash.accent { background: color-mix(in srgb, var(--bad) 28%, transparent); }
+  .bpm { font-size: clamp(4rem, 13vw, 7.5rem); font-weight: 750; line-height: 1; font-variant-numeric: tabular-nums; }
+  .bpm small { font-size: 1.1rem; font-weight: 500; color: var(--dim); margin-left: 6px; }
+  .mark { color: var(--hi); font-weight: 650; letter-spacing: .05em; font-size: 1.2rem; }
+  .meter { font-size: 1.15rem; }
+  .where { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+  .dots { display: flex; gap: 8px; margin-top: 4px; }
+  .dots i { width: 22px; height: 22px; border-radius: 50%; background: var(--line); display: block; }
+  .dots i.wide { width: 34px; border-radius: 11px; }
+  .dots i.on { background: var(--ok); } .dots i.on.acc { background: var(--bad); }
+  canvas { width: 100%; height: auto; aspect-ratio: 1 / 0.95; display: block; }
+  .keys { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+  @media (max-width: 560px) { .keys { grid-template-columns: repeat(4, 1fr); } }
+  .key { border: 1px solid var(--line); border-radius: 6px; padding: 6px 2px; text-align: center; background: var(--key);
+    color: var(--keyfg); min-height: 50px; margin: 0; cursor: pointer; }
+  .key .n { font-size: .78em; color: var(--dim); display: block; }
+  .key .b { font-weight: 650; }
+  .key.empty { opacity: .45; cursor: default; }
+  .key.active { background: var(--lit); color: #1b1b1f; } .key.active .n { color: #4a3a00; }
+  .key.pend { animation: blink .5s steps(1) infinite; border-color: var(--fg); }
+  @keyframes blink { 50% { background: var(--lit); color: #1b1b1f; } }
+  input[type=range] { accent-color: var(--hi); vertical-align: middle; }
+  .cal { min-width: 180px; }
+  kbd { font-family: ui-monospace, monospace; font-size: .9em; border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 4px; padding: 0 4px; background: var(--bg); }
+</style>
+</head>
+<body>
+<main>
+  <h1>METRONOME live</h1>
+  <p class="lead">Play along with an <a href="https://github.com/daviddwlee84/fm1-metronome">FM-1 running METRONOME</a>
+    0.4 or newer: a conductor beating its meter, the clicks from this computer if you like, and its transport. ·
+    <a href="../">setlist editor</a> · <a href="../cheatsheet.html">cheatsheet</a> · <a href="../try/">try it in the browser</a></p>
+
+  <section>
+    <div class="row">
+      <button id="usb" class="primary">Connect over USB</button>
+      <button id="ble" hidden>Connect over Bluetooth</button>
+      <span class="dim">|</span>
+      <label class="dim">or a demo without an FM-1
+        <select id="demo"><option value="">—</option></select></label>
+    </div>
+    <div id="status">Chrome or Edge on a computer (Web MIDI; Bluetooth with Web Bluetooth). Safari and every browser on
+      iPhone and iPad have neither: the demo still runs there.</div>
+  </section>
+
+  <section class="stage">
+    <div class="readout" id="readout">
+      <div class="bpm"><span id="bpm">–</span><small>BPM</small></div>
+      <div class="mark" id="mark">&nbsp;</div>
+      <div class="meter" id="meter">&nbsp;</div>
+      <div class="where" id="where">stopped</div>
+      <div class="dots" id="dots"></div>
+      <div class="dim" id="pattern">&nbsp;</div>
+    </div>
+    <canvas id="cond" width="640" height="608" aria-label="a conductor beating the bar"></canvas>
+  </section>
+
+  <section>
+    <div class="row">
+      <button id="play" disabled>Start</button>
+      <button data-bpm="-5" disabled>−5</button><button data-bpm="-1" disabled>−1</button>
+      <button data-bpm="1" disabled>+1</button><button data-bpm="5" disabled>+5</button>
+      <span class="dim">|</span>
+      <button id="sound" disabled title="The FM-1 falls silent while this page sounds the clicks; it sounds again when the page lets go or goes away">Clicks from this computer</button>
+      <label class="dim">volume <input type="range" id="vol" min="0" max="100" value="70"></label>
+    </div>
+    <h2 style="margin-top:12px">The songs <span class="dim" style="font-weight:400">(as on the FM-1's white keys; a press here is one there)</span></h2>
+    <div class="keys" id="keys"></div>
+  </section>
+
+  <section>
+    <h2>In time</h2>
+    <div class="row">
+      <label>Calibration <input type="range" class="cal" id="cal" min="-150" max="250" value="0"> <span id="calv">0</span> ms</label>
+      <button id="tapcal" disabled>Tap along to calibrate</button>
+      <span class="dim" id="calhelp">With the FM-1 clicking, press <kbd>T</kbd> (or the button) on 8 beats: the conductor and this page's clicks
+        then land with its sound. Kept for USB and Bluetooth apart, in this browser.</span>
+    </div>
+    <p class="dim">The FM-1 tells this page only what plays and when, on a change and once a second; the page counts
+      the beats on its own clock, so the link's jitter (USB a few ms, Bluetooth tens) does not reach the beat. What
+      is left is a fixed delay, which the calibration takes out.</p>
+  </section>
+</main>
+<script src="../setlist.js"></script>
+<script src="../link.js"></script>
+<script src="../live.js"></script>
+<script src="../conductor.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id), SR = MT.SR;
+const clk = MTLive.clock(), plan = MTLive.plan(clk);
+let songs = null;   // the FM-1's setlist (read at connect), each song kept up to date by STATE
+let live = false;   // the FM-1 can do 0.4's live link
+function status(t, k) { const s = $("status"); s.textContent = t; s.className = k || ""; }
+const store = { get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private window */ } } };
+
+// ------------------------------------------------------------------ the link ---
+const link = MTLink.create({
+  onStatus: status,
+  onConnect(L) {
+    const fw = L.firmware ? `${L.firmware[0]}.${L.firmware[1]}` : "";
+    live = !L.firmware || L.firmware[0] > 0 || L.firmware[1] >= MT.LIVE_MINOR;
+    stopDemo();
+    if (!live) { status(`METRONOME ${fw} has no live link: install 0.4 or newer (the setlist editor still works with it).`, "bad"); return; }
+    status(`Connected: METRONOME ${fw} over ${L.via}${L.via === "USB" ? ` ("${L.name}")` : ""}.`, "ok");
+    loadCal();
+    asm = MT.assembler();
+    L.send(MT.frame(MT.T.SET_REQ));   // the 16 songs, for the keys
+    L.send(MT.ctrl(MT.C.STATE));
+    enable(true);
+  },
+  onLost() { enable(false); plan.reset(); sound.cancel(); songs = null; drawKeys(); },
+  onFrame(m, ts) {
+    if (m.type === MT.T.STATE) { live = true; takeState(MT.decodeState(m.payload), ts); }
+    else if (m.type === MT.T.SET && asm) {
+      try { const s = asm.feed(m.payload); if (s) { songs = s.songs; asm = null; drawKeys(); } } catch (err) { asm = null; }
+    }
+  },
+});
+let asm = null;
+$("usb").onclick = () => link.usb();
+$("ble").onclick = () => link.ble();
+if (link.bleAvailable) $("ble").hidden = false;
+function send(f) { if (link.connected && live) link.send(f); }
+function enable(on) {
+  for (const b of document.querySelectorAll("[data-bpm], #play, #sound, #tapcal")) b.disabled = !on;
+  if (!on) { $("sound").classList.remove("on"); sound.on = false; }
+}
+
+// ---------------------------------------------------------- a STATE comes in ---
+let shown = null;   // the song on the readout
+function takeState(st, arrived) {
+  const changed = plan.take(st, arrived);
+  if (songs && st.song.used) songs[st.songNo] = st.song;   // (an edit on the FM-1)
+  if (!st.next) shown = st.song;
+  if (changed) sound.replan();
+  $("sound").classList.toggle("on", st.muted && sound.on);
+  $("play").textContent = st.running ? "Stop" : "Start";
+  drawKeys();
+  readout();
+}
+function readout() {
+  const g = shown;
+  if (!g) return;
+  $("bpm").textContent = g.bpm;
+  $("mark").textContent = MT.MARKS[MT.marking(g.bpm)][0];
+  $("meter").textContent = MT.meterText(g).replace(/\s+/g, " ");
+  const p = MTConductor.patternFor(g);
+  $("pattern").textContent = `conducted ${p.name}`;
+  const dots = $("dots");
+  if (dots.childElementCount !== p.beats.length || dots.dataset.k !== p.beats.join()) {
+    dots.innerHTML = ""; dots.dataset.k = p.beats.join();
+    for (const b of p.beats) { const i = document.createElement("i"); if (b > 12) i.className = "wide"; dots.appendChild(i); }
+  }
+}
+function drawKeys() {
+  const k = $("keys");
+  k.innerHTML = "";
+  for (let i = 0; i < MT.NSLOT; i++) {
+    const g = songs ? songs[i] : null, b = document.createElement("button");
+    b.className = "key" + (g && g.used ? "" : " empty") + (i === plan.active && (songs || plan.running) ? " active" : "")
+      + (plan.next && plan.next.songNo === i ? " pend" : "");
+    b.innerHTML = `<span class="n">${i + 1}</span><span class="b">${g && g.used ? g.bpm : "–"}</span>`;
+    b.disabled = !link.connected || !(g && g.used);
+    b.onclick = () => send(MT.ctrl(MT.C.PICK, i));
+    k.appendChild(b);
+  }
+}
+$("play").onclick = () => send(MT.ctrl(plan.running ? MT.C.STOP : MT.C.START));
+for (const b of document.querySelectorAll("[data-bpm]"))
+  b.onclick = () => shown && send(MT.ctrl(MT.C.BPM, Math.max(MT.BPM_MIN, Math.min(MT.BPM_MAX, shown.bpm + +b.dataset.bpm))));
+
+// ---------------------------------------------------------------- the clicks ---
+// planned ahead on the audio clock: the FM-1's time -> the page's (clk) -> the audio's (getOutputTimestamp)
+const sound = {
+  on: false, ctx: null, gain: null, nodes: [], last: -Infinity, timer: 0,
+  start() {
+    this.ctx = this.ctx || new (window.AudioContext || window.webkitAudioContext)();
+    this.ctx.resume();
+    if (!this.gain) { this.gain = this.ctx.createGain(); this.gain.connect(this.ctx.destination); }
+    this.gain.gain.value = $("vol").value / 100;
+    this.on = true; this.last = -Infinity;
+    clearInterval(this.timer); this.timer = setInterval(() => this.pump(), 25);
+  },
+  stop() { this.on = false; clearInterval(this.timer); this.cancel(); },
+  ctxTime(pageMs) {
+    const t = this.ctx.getOutputTimestamp ? this.ctx.getOutputTimestamp() : null;
+    if (t && t.performanceTime) return t.contextTime + (pageMs - t.performanceTime) / 1000;
+    return this.ctx.currentTime + (pageMs - performance.now()) / 1000 - (this.ctx.outputLatency || 0);
+  },
+  cancel() {   // the clicks planned and not yet sounded
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime + 0.003;
+    this.nodes = this.nodes.filter(([when, o]) => { if (when > now) { try { o.stop(); o.disconnect(); } catch (e) { /* done */ } return false; } return when > now - 1; });
+  },
+  replan() { if (!this.on) return; this.cancel(); this.last = clk.toDevice(performance.now() - cal()); this.pump(); },
+  pump() {
+    if (!this.on || !plan.running || clk.offset === null) return;
+    const nowDev = clk.toDevice(performance.now() - cal()), to = nowDev + 0.15 * SR, from = Math.max(this.last, nowDev);
+    for (const { tick, dev, seg } of plan.ticks(from, to)) {
+      const when = this.ctxTime(clk.toPage(dev) + cal()), snd = MT.SND[seg.song.sound];
+      if (when < this.ctx.currentTime) continue;
+      for (const [v, vol] of MT.hits(seg.song, tick)) {
+        const o = this.ctx.createOscillator(), a = this.ctx.createGain(), len = snd.tau / 1000 * 7;
+        o.frequency.value = snd.hz[v];
+        a.gain.setValueAtTime(MT.V_AMP[v] * vol / 7 * 0.7, when);
+        a.gain.exponentialRampToValueAtTime(0.0001, when + len);
+        o.connect(a).connect(this.gain); o.start(when); o.stop(when + len + 0.02);
+        this.nodes.push([when, o]);
+      }
+    }
+    this.last = Math.max(this.last, to);
+  },
+};
+$("vol").oninput = () => { if (sound.gain) sound.gain.gain.value = $("vol").value / 100; };
+$("sound").onclick = () => {
+  if (sound.on) { sound.stop(); send(MT.ctrl(MT.C.MUTE, 0)); $("sound").classList.remove("on"); }
+  else { sound.start(); if (demo) $("sound").classList.add("on"); else send(MT.ctrl(MT.C.MUTE, 1)); sound.replan(); }
+};
+window.addEventListener("pagehide", () => { if (sound.on) send(MT.ctrl(MT.C.MUTE, 0)); });
+
+// ---------------------------------------------------------- the calibration ---
+const calKey = () => `metronome.live.cal.${link.via || "demo"}`;
+function cal() { return +$("cal").value; }
+function loadCal() { $("cal").value = store.get(calKey(), 0); $("calv").textContent = cal(); }
+$("cal").oninput = () => { $("calv").textContent = cal(); store.set(calKey(), cal()); sound.replan(); };
+let taps = null;
+function tapCal() {
+  if (!plan.running) { status("Start the FM-1 first: calibrate against its clicks.", "bad"); return; }
+  taps = taps || [];
+  const now = performance.now(), w = plan.where(clk.toDevice(now - cal()));
+  if (!w) return;
+  // how far this press is from the nearest beat as the page shows it
+  const fromBeat = (w.tick % 12) * w.seg.q8 / 256 / SR * 1000, beatMs = 12 * w.seg.q8 / 256 / SR * 1000;
+  taps.push(fromBeat > beatMs / 2 ? fromBeat - beatMs : fromBeat);
+  $("tapcal").textContent = `Tap along: ${taps.length} of 8`;
+  if (taps.length < 8) return;
+  const m = taps.slice().sort((a, b) => a - b)[4];
+  $("cal").value = Math.round(cal() + m); $("cal").oninput();
+  status(`Calibrated: ${cal()} ms. (The presses were within ${Math.round(Math.max(...taps) - Math.min(...taps))} ms of each other.)`, "ok");
+  taps = null; $("tapcal").textContent = "Tap along to calibrate";
+}
+$("tapcal").onclick = tapCal;
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key === "t" || e.key === "T") tapCal();
+});
+
+// --------------------------------------------------------------- the demo ---
+// without an FM-1: this page plays the part of one (its clock as the FM-1's), so the conductor can be seen
+const DEMOS = [["4/4", { beats: 4 }], ["3/4", { beats: 3 }], ["2/4", { beats: 2 }], ["6/8", "6/8"], ["9/8", "9/8"], ["12/8", "12/8"],
+  ["6/8 in 6", "6/8 IN 6"], ["5/8 3+2", "5/8 3+2"], ["7/8 2+2+3", "7/8 2+2+3"], ["5/4", "5/4"], ["CLASSIC, accent every 3", { mode: 1, accent_every: 3, mix: [7, 3, 0, 0] }]];
+DEMOS.forEach(([name], i) => { const o = document.createElement("option"); o.value = String(i + 1); o.textContent = name; $("demo").appendChild(o); });
+let demo = null;
+function demoSong(i, bpm) {
+  const [, d] = DEMOS[i], g = MT.song({ used: true, bpm });
+  if (typeof d === "string") MT.presetApply(g, MT.PRESETS.findIndex(p => p[0] === d)); else Object.assign(g, d);
+  if (g.mode === 0 && typeof d !== "string") g.steps = MT.gridDefault(g.beats, g.div);
+  return g;
+}
+function stopDemo() { if (!demo) return; clearInterval(demo.timer); demo = null; $("demo").value = ""; plan.reset(); }
+$("demo").onchange = () => {
+  const v = +$("demo").value;
+  if (demo) { clearInterval(demo.timer); demo = null; }
+  plan.reset();
+  if (!v || link.connected) { if (link.connected) $("demo").value = ""; readout(); return; }
+  const g = demoSong(v - 1, 96), q8 = Math.floor(SR * 60 * 256 / g.bpm / 12), dev = () => Math.round(performance.now() * SR / 1000) >>> 0;
+  const at = (dev() + SR / 5) >>> 0;
+  const st = () => ({ seq: 0, flags: 1, active: 0, songNo: 0, song: g, tick: 0, at, q8, now: dev(), running: true, muted: false, next: false });
+  demo = { timer: setInterval(() => takeState(st(), performance.now()), 1000) };
+  takeState(st(), performance.now());
+  $("sound").disabled = false;
+  status(`Demo: ${DEMOS[v - 1][0]} at ${g.bpm} BPM, played by this page. Connect an FM-1 to follow it instead.`, "ok");
+};
+
+// -------------------------------------------------------------- each frame ---
+const ctx2 = $("cond").getContext("2d");
+let lastBeat = -1;
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function frame() {
+  const g = shown || MT.song({ used: true }), p = MTConductor.patternFor(g);
+  const w = plan.where(clk.offset === null ? -1 : clk.toDevice(performance.now() - cal()));
+  let at = null;
+  if (w) {
+    const bar = MT.barTicks(w.seg.song), q = MTConductor.patternFor(w.seg.song);
+    let t = w.inBar, beat = 0;
+    while (beat < q.beats.length - 1 && t >= q.beats[beat]) t -= q.beats[beat++];
+    at = { inBar: w.inBar, beat, frac: t / q.beats[beat] };
+    const barNo = Math.floor(w.tick / bar) + 1, fresh = w.tick % 12 < 2.5, gb = Math.floor(w.inBar / 12);
+    const acc = w.seg.song.mode === 0 ? w.seg.song.steps[gb * w.seg.song.div] === 3 : w.seg.song.accent_every && gb === 0;
+    $("where").textContent = `bar ${barNo} · beat ${beat + 1}`;
+    $("readout").className = "readout" + (fresh ? " flash" + (acc ? " accent" : "") : "");
+    const dots = $("dots").children;
+    for (let i = 0; i < dots.length; i++) dots[i].className = (q.beats[i] > 12 ? "wide" : "") + (i === beat ? " on" + (beat === 0 ? " acc" : "") : "");
+    if (shown !== w.seg.song && w.seg.song) { shown = w.seg.song; readout(); }
+    lastBeat = beat;
+  } else if (lastBeat !== -2) {
+    $("where").textContent = plan.running ? "about to start" : "stopped";
+    $("readout").className = "readout";
+    for (const d of $("dots").children) d.classList.remove("on", "acc");
+    lastBeat = -2;
+  }
+  MTConductor.draw(ctx2, $("cond").width, $("cond").height, w ? MTConductor.patternFor(w.seg.song) : p, at,
+    { fg: css("--fg"), dim: css("--dim"), accent: css("--accent"), figure: css("--figure") });
+  requestAnimationFrame(frame);
+}
+drawKeys();
+loadCal();
+shown = MT.song({ used: true });
+readout();
+requestAnimationFrame(frame);
+if (!link.midiAvailable && !link.bleAvailable) { $("usb").disabled = true; status("This browser has no Web MIDI and no Web Bluetooth (Safari, and every browser on iPhone and iPad): the demo still runs here.", "bad"); }
+</script>
+</body>
+</html>

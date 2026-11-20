@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* METRONOME v0.3: SET, GRID and CLASSIC (see app.h); the setlist to and from a computer over USB. What sounds when
- * is metro.c.
+/* METRONOME v0.4: SET, GRID and CLASSIC (see app.h); the setlist to and from a computer, and a live link a web page
+ * plays along with (STATE out, CTRL in), over USB or Bluetooth. What sounds when is metro.c.
  *
  * Time: the audio's sample count is the clock, as in RHYTHM. The render plays every click on its exact sample (a
  * tick is a twelfth of a beat), not on the next block. A change while playing (another song, a new tempo, a step)
@@ -14,7 +14,7 @@
 #include "hostlink.c"
 
 #define FW_MAJOR 0
-#define FW_MINOR 3
+#define FW_MINOR 4
 #define SR 44100u
 
 /* ---------------------------------------------------------------- settings --- */
@@ -32,12 +32,15 @@ typedef struct {
     uint8_t page;                        /* PG_* */
     uint8_t active;                      /* the song on, 0..MT_NSLOT-1 */
     uint8_t swap_now;                    /* SET: another song starts 0 at the next bar, 1 at once */
-    uint8_t rsv;
+    uint8_t flags;                       /* bit 0: Bluetooth off (SET EDIT K4); the rest 0. (0.3 and before: a spare
+                                          * byte, always 0, so an older record reads as Bluetooth on) */
     mt_slot_t slot[MT_NSLOT];
 } rec_t;
 static rec_t rec;
 static uint32_t saves, dirty_at;
 #define CUR (&rec.slot[rec.active])
+#define F_BT_OFF 1u
+static int bt_off(void) { return rec.flags & F_BT_OFF; }
 
 static void defaults(void)
 {
@@ -83,9 +86,11 @@ static struct {
     volatile uint8_t pend;               /* a switch waits for tick pend_at's sample */
     uint32_t pend_at, pend_tick, pend_q8;
     mt_slot_t ps;
+    uint8_t song, psong;                 /* the slots s and ps came from (the live link's STATE) */
     volatile uint32_t switches;          /* switches made (checks) */
     volatile uint32_t nv[MT_NV];         /* voices sounded (checks) */
 } tr;
+static volatile uint8_t au_mute;         /* the web page sounds the clicks: counted, not heard (RAM only, never kept) */
 
 typedef struct {
     float ph, inc, amp, dec;
@@ -125,7 +130,7 @@ static void sound(uint32_t t)
     mt_hits(&tr.s, t, &h);
     for (i = 0; i < h.n; i++) {
         uint32_t v = h.v[i];
-        voice(SND[tr.s.sound].hz[v], V_AMP[v] * (float)h.vol[i] / (float)MT_VOL_MAX, SND[tr.s.sound].tau);
+        if (!au_mute) voice(SND[tr.s.sound].hz[v], V_AMP[v] * (float)h.vol[i] / (float)MT_VOL_MAX, SND[tr.s.sound].tau);
         tr.nv[v]++;
     }
 }
@@ -146,6 +151,7 @@ void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
         while (tr.run && (int32_t)(now - tr.next_at) >= 0) {
             if (tr.pend && (int32_t)(tr.next_at - tr.pend_at) >= 0) {   /* a switch: another song or tempo */
                 tr.s = tr.ps;
+                tr.song = tr.psong;
                 tr.tick_q8 = tr.pend_q8;
                 tr.start = tr.pend_at - q8_mul(tr.pend_tick, tr.pend_q8);
                 tr.next = tr.pend_tick;
@@ -223,6 +229,7 @@ static int white_of(uint32_t k)          /* a key's white index 0..15, -1 for a 
 #define BAND 88
 #define C_RED RGB(240, 70, 60)
 #define C_GRN RGB(80, 220, 120)
+#define C_BLUE RGB(70, 140, 255)
 
 static struct {
     uint32_t btn, redraw, anim_at;
@@ -238,7 +245,11 @@ static struct {
     uint32_t sel_turn_at;                /* SELECT: the last detent, for its acceleration */
     uint32_t locked;                     /* SET: black-key taps ignored while playing (checks) */
     uint8_t ask;                         /* a setlist from the computer waits for PLAY (yes) or HOME (no) */
+    uint8_t host_was, ble_was;           /* the header's PC and BT, as last drawn */
 } ui;
+/* the live link: a STATE is due (st_due), at once (st_now: a start, a stop, a song) or within ST_GAP (an edit) */
+static uint8_t st_due, st_now;
+#define ST_GAP 40u
 static int host_fails;
 
 static void zero(void *p, uint32_t n)
@@ -329,6 +340,7 @@ static void meter_text(char *t, const mt_slot_t *s)
 static void changed(uint32_t r)
 {
     ui.redraw |= r;
+    st_due = 1;
     dirty_at = plat_ms();
     if (!dirty_at) dirty_at = 1u;
 }
@@ -343,14 +355,17 @@ static void tr_stop(void)
     ui.running = 0;
     ui.pend = -1;
     ui.redraw |= R_ALL;
+    st_due = st_now = 1;
 }
 
 static void tr_start(void)
 {
     uint32_t f = plat_lock();
     tr.s = *CUR;
+    tr.song = rec.active;
     tr.tick_q8 = mt_tick_q8(CUR->bpm, SR);
-    tr.start = au_blk + APP_BLOCK + tk_since * (SR / 1000u) + SR / 20u;   /* 50 ms ahead: the first click whole */
+    /* 50 ms ahead: the first click whole; 150 ms while the web page sounds them, so its STATE gets there first */
+    tr.start = au_blk + APP_BLOCK + tk_since * (SR / 1000u) + (au_mute ? SR * 3u / 20u : SR / 20u);
     tr.next = 0;
     tr.next_at = 0;
     tr.pend = 0;
@@ -359,6 +374,7 @@ static void tr_start(void)
     ui.running = 1;
     ui.pend = -1;
     ui.redraw |= R_ALL;
+    st_due = st_now = 1;
 }
 
 /* while playing: the active song as it is now. FOLLOW_EDIT from the next tick, the count going on (a tempo, a step);
@@ -382,11 +398,14 @@ static void tr_follow(int how)
         t0 = how == FOLLOW_NOW ? 0u : tr.next;
     }
     tr.ps = *CUR;
+    tr.psong = rec.active;
     tr.pend_q8 = mt_tick_q8(CUR->bpm, SR);
     tr.pend_at = at;
     tr.pend_tick = t0;
     tr.pend = 1;
     plat_unlock(f);
+    st_due = 1;
+    if (how != FOLLOW_EDIT) st_now = 1;
 }
 
 static int32_t tick_now(void)            /* the tick playing now; -1 stopped or before the start */
@@ -523,17 +542,31 @@ static void edited(uint32_t r)           /* the active song changed: play it so,
     changed(r);
 }
 
-/* ------------------------------------------------- the setlist over USB --- */
-/* The setlist to a file and back, as THEORY's progress backup does it (host/ and web/ in this firmware's repository):
+/* ------------------------------------------- a computer: USB or Bluetooth --- */
+/* The setlist to a file and back, as THEORY's progress backup does it, and a live link (host/ and web/ in this
+ * firmware's repository):
  *   F0 7D 4D 54 <ver=1> <type> <payload...> F7   ("MT"; every payload byte 7-bit)
  * device -> host: HELLO 41 (proto, fw major, fw minor, transport), HEARTBEAT 42 (proto, transport),
- *                 SET 44 (index, count, chunk 7-bit packed), SET_DONE 45 (0 loaded, 1 declined, 2 refused)
- * host -> device: HELLO_ACK 01, SET_REQ 04, SET_LOAD 05 (as SET)
- * 46 / 06 are kept for a live link (the transport's state, so a page can play along: docs/dev/metronome.md).
+ *                 SET 44 (index, count, chunk 7-bit packed), SET_DONE 45 (0 loaded, 1 declined, 2 refused),
+ *                 STATE 46 (0.4: 48 bytes 7-bit packed, below)
+ * host -> device: HELLO_ACK 01, SET_REQ 04, SET_LOAD 05 (as SET), CTRL 06 (0.4: op, args; below)
  * The record: a format byte, the active song, the switch, the page, 16 songs of 28 bytes field by field, a
- * CRC-16/CCITT-FALSE (low byte first). A setlist that comes in waits on the screen for PLAY. */
-enum { T_HELLO_ACK = 0x01, T_SET_REQ = 0x04, T_SET_LOAD = 0x05,
-       T_HELLO = 0x41, T_HEARTBEAT = 0x42, T_SET = 0x44, T_SET_DONE = 0x45 };
+ * CRC-16/CCITT-FALSE (low byte first). A setlist that comes in waits on the screen for PLAY.
+ *
+ * STATE: what plays and when, so a page plays along on its own clock instead of a message a beat. Sent when it
+ * changes (a start, a stop, a song, a tempo, an edit) and once a second while playing (the two clocks drift apart).
+ *   0 seq, 1 flags (1 running, 2 muted, 4 this is the switch waiting, not what plays now, 8 switch NOW),
+ *   2 the active song, 3 this segment's song, 4..31 its 28 bytes (as the record's), 32..35 a tick and 36..39 its
+ *   sample (the segment's anchor: tick t sounds at sample + (t - tick) * q8 / 256), 40..43 q8 (samples a tick x256,
+ *   a tick a twelfth of a beat), 44..47 the sample now (when it was sent); u32 low byte first, 44.1 kHz samples.
+ * While a switch waits a second STATE (flag 4) follows the first with it. Stopped: flags 0, the active song's.
+ * CTRL: 1 START, 2 STOP, 3 PICK song, 4 BPM lo7 hi7, 5 MUTE 0/1 (the clicks off here: the page sounds them; off by
+ *   itself when the computer goes), 6 STATE? (one now). As the keys do it; while a question waits only STOP, STATE?. */
+enum { T_HELLO_ACK = 0x01, T_SET_REQ = 0x04, T_SET_LOAD = 0x05, T_CTRL = 0x06,
+       T_HELLO = 0x41, T_HEARTBEAT = 0x42, T_SET = 0x44, T_SET_DONE = 0x45, T_STATE = 0x46 };
+enum { C_START = 1, C_STOP, C_PICK, C_BPM, C_MUTE, C_STATE };
+enum { SF_RUN = 1, SF_MUTE = 2, SF_NEXT = 4, SF_NOW = 8 };
+#define ST_N 48u
 enum { SD_LOADED, SD_DECLINED, SD_BAD };
 #define MT_PROTO 1u
 #define SL_FORMAT 1u
@@ -549,6 +582,10 @@ static struct {
     rec_t in;                            /* a setlist waiting for PLAY */
     uint32_t loads;                      /* setlists loaded (checks) */
 } xfer;
+static struct {
+    uint8_t seq;
+    uint32_t sent_at, states, ctrls;     /* the last STATE; STATEs sent, CTRLs taken (checks) */
+} live;
 
 static uint16_t crc16(const uint8_t *p, uint32_t n)   /* CRC-16/CCITT-FALSE */
 {
@@ -561,28 +598,30 @@ static uint16_t crc16(const uint8_t *p, uint32_t n)   /* CRC-16/CCITT-FALSE */
     return c;
 }
 
+static void song_put(uint8_t *d, const mt_slot_t *s)  /* SL_SONG bytes: a song as the record and STATE carry it */
+{
+    uint32_t j;
+    d[0] = s->used;
+    d[1] = s->mode;
+    d[2] = (uint8_t)s->bpm;
+    d[3] = (uint8_t)(s->bpm >> 8);
+    d[4] = s->bpb;
+    d[5] = s->div;
+    d[6] = s->beat;
+    d[7] = s->sound;
+    for (j = 0; j < MT_NLAYER; j++) d[8 + j] = s->mix[j];
+    for (j = 0; j < MT_STEPS; j++) d[12 + j] = s->steps[j];
+}
+
 static void sl_fill(const rec_t *r, uint8_t *b)       /* SL_N bytes */
 {
-    uint32_t i, j;
+    uint32_t i;
     uint16_t c;
     b[0] = SL_FORMAT;
     b[1] = r->active;
     b[2] = r->swap_now;
     b[3] = r->page;
-    for (i = 0; i < MT_NSLOT; i++) {
-        const mt_slot_t *s = &r->slot[i];
-        uint8_t *d = b + 4u + i * SL_SONG;
-        d[0] = s->used;
-        d[1] = s->mode;
-        d[2] = (uint8_t)s->bpm;
-        d[3] = (uint8_t)(s->bpm >> 8);
-        d[4] = s->bpb;
-        d[5] = s->div;
-        d[6] = s->beat;
-        d[7] = s->sound;
-        for (j = 0; j < MT_NLAYER; j++) d[8 + j] = s->mix[j];
-        for (j = 0; j < MT_STEPS; j++) d[12 + j] = s->steps[j];
-    }
+    for (i = 0; i < MT_NSLOT; i++) song_put(b + 4u + i * SL_SONG, &r->slot[i]);
     c = crc16(b, SL_N - 2u);
     b[SL_N - 2u] = (uint8_t)c;
     b[SL_N - 1u] = (uint8_t)(c >> 8);
@@ -686,8 +725,10 @@ static void ask_answer(int yes)
     if (!ui.ask) return;
     ui.ask = 0;
     if (yes) {
+        uint8_t keep = rec.flags;        /* (this unit's own setting, not the setlist's) */
         if (ui.running) tr_stop();
         rec = xfer.in;
+        rec.flags = keep;
         ui.edit = 0;
         tap_reset();
         rec_save();
@@ -701,20 +742,154 @@ static void ask_answer(int yes)
     ui.redraw |= R_ALL;
 }
 
-static int host_frame(const uint8_t *p, uint32_t n)
+static void put32(uint8_t *b, uint32_t v)
+{
+    b[0] = (uint8_t)v, b[1] = (uint8_t)(v >> 8), b[2] = (uint8_t)(v >> 16), b[3] = (uint8_t)(v >> 24);
+}
+
+/* one STATE: what plays now (next 0), or the switch waiting (next 1); 0 = queued */
+static int st_send(int next)
+{
+    uint8_t b[ST_N], f[ST_N + ST_N / 7u + 1u];
+    mt_slot_t s;
+    uint32_t fl, tick = 0, at = 0, q8 = 0, now, k;
+    int song = rec.active;
+    k = plat_lock();
+    fl = (tr.run ? SF_RUN : 0u) | (au_mute ? SF_MUTE : 0u) | (rec.swap_now ? SF_NOW : 0u);
+    if (next && tr.run && tr.pend)
+        s = tr.ps, song = tr.psong, tick = tr.pend_tick, at = tr.pend_at, q8 = tr.pend_q8, fl |= SF_NEXT;
+    else if (tr.run)
+        s = tr.s, song = tr.song, at = tr.start, q8 = tr.tick_q8;
+    else
+        s = *CUR;
+    now = au_blk + APP_BLOCK + tk_since * (SR / 1000u);
+    plat_unlock(k);
+    b[0] = live.seq;
+    b[1] = (uint8_t)fl;
+    b[2] = rec.active;
+    b[3] = (uint8_t)song;
+    song_put(b + 4, &s);
+    put32(b + 32, tick);
+    put32(b + 36, at);
+    put32(b + 40, q8);
+    put32(b + 44, now);
+    k = pack7(b, ST_N, f);
+    if (hl_send(&link, T_STATE, f, k) != 0) return -1;
+    live.seq = (uint8_t)((live.seq + 1u) & 0x7Fu);
+    live.states++;
+    return 0;
+}
+
+static void st_pump(uint32_t now)        /* STATE when due (main loop: plat_sysex_send is not for the render) */
+{
+    static uint8_t owe_next;             /* the switch's STATE did not fit after the first: the next pass */
+    if (!hl_host(&link, now)) { st_due = st_now = owe_next = 0; return; }
+    if (owe_next) {
+        if (tr.pend && st_send(1) != 0) return;
+        owe_next = 0;
+    }
+    if (ui.running && now - live.sent_at >= 1000u) st_due = 1;   /* the clocks' drift */
+    if (!st_due || (!st_now && now - live.sent_at < ST_GAP)) return;
+    if (st_send(0) != 0) return;         /* (no room: the next pass) */
+    st_due = st_now = 0;
+    live.sent_at = now;
+    if (tr.pend && st_send(1) != 0) owe_next = 1;
+}
+
+static void mute_set(int on)
+{
+    if ((uint8_t)on == au_mute) return;
+    au_mute = (uint8_t)on;
+    app_say("CLICK", on ? "ON THE COMPUTER" : "HERE");
+    ui.redraw |= R_HEAD;
+    st_due = st_now = 1;
+}
+
+static void key_play(void);
+static void song_try(int w);
+
+static void ctrl_in(const uint8_t *d, uint32_t len)   /* the page's hand on the transport, as the keys do it */
+{
+    int op = len ? d[0] : 0;
+    live.ctrls++;
+    if ((ui.ask || ui.confirm_until) && op != C_STOP && op != C_STATE) { st_due = st_now = 1; return; }
+    if (op == C_START) { if (!ui.running) key_play(); }
+    else if (op == C_STOP) { if (ui.running) key_play(); }
+    else if (op == C_PICK && len >= 2u && d[1] < MT_NSLOT) song_try(d[1]);
+    else if (op == C_BPM && len >= 3u) {
+        int bpm = d[1] | d[2] << 7;
+        if (bpm >= MT_BPM_MIN && bpm <= MT_BPM_MAX && bpm != CUR->bpm) bpm_by(bpm - CUR->bpm);
+    } else if (op == C_MUTE && len >= 2u) mute_set(d[1] != 0);
+    st_due = st_now = 1;                 /* (an answer either way: the page sees what it did, or did not) */
+}
+
+static int host_frame(const uint8_t *p, uint32_t n, int transport)
 {
     uint8_t type;
     uint32_t len;
     const uint8_t *d = hl_match(&link, p, n, &type, &len);
     if (!d) return 0;
     hl_seen(&link, plat_ms());
-    if (type == T_HELLO_ACK) hl_acked(&link, plat_ms(), HL_USB);
-    else if (type == T_SET_REQ) { xfer.tx_on = 1; xfer.tx_i = 0; }
+    if (type == T_HELLO_ACK) {
+        if (!hl_host(&link, plat_ms())) st_due = st_now = 1;   /* a page is here: it learns the state at once */
+        hl_acked(&link, plat_ms(), transport);
+    } else if (type == T_SET_REQ) { xfer.tx_on = 1; xfer.tx_i = 0; }
     else if (type == T_SET_LOAD) sl_in(d, len);
+    else if (type == T_CTRL) ctrl_in(d, len);
     return 1;
 }
 
-int app_sysex(const uint8_t *p, uint32_t n) { return host_frame(p, n); }
+int app_sysex(const uint8_t *p, uint32_t n) { return host_frame(p, n, HL_USB); }
+
+#if FM1B_BLE
+/* Bluetooth: the own stack hands SysEx over as USB-MIDI packets on PORT_BLE (hostlink.h); the main loop reads them */
+static hl_sx_t ble_rx;
+static void ble_pkt(uint32_t pkt)
+{
+    const uint8_t *f;
+    uint32_t n;
+    if (hl_sx_packet(&ble_rx, pkt, &f, &n)) host_frame(f, n, HL_BLE);
+}
+
+static void ble_in(void)
+{
+    uint32_t pkt;
+    int port;
+    while (plat_midi_in(&pkt, &port))
+        if (port == PORT_BLE) ble_pkt(pkt);
+}
+
+/* nothing of Bluetooth's is written: the own stack makes its address from the flash part's unique ID (the same at
+ * every start) and there is no pairing to keep, as in MORSE and Conductor */
+int app_ble_load(struct plat_ble_rec *r)
+{
+    (void)r;
+    return 0;
+}
+int app_ble_save(const struct plat_ble_rec *r)
+{
+    (void)r;
+    return 0;
+}
+#endif
+
+/* APP_BLE_AT_BOOT: the device asks before app_init, so it reads the record itself, into its own copy */
+int metro_ble_off(void)
+{
+    static rec_t r;
+    if (plat_store_load(OBJ_METRO, &r, sizeof r) != (int)sizeof r || !rec_valid(&r)) return 0;
+    return r.flags & F_BT_OFF;
+}
+
+static void ble_toggle(void)             /* SET EDIT K4 */
+{
+    rec.flags ^= F_BT_OFF;
+#if FM1B_BLE
+    plat_ble_enable(!bt_off());
+#endif
+    app_say("BLUETOOTH", !FM1B_BLE ? "NOT IN THIS BUILD" : bt_off() ? "OFF" : "ON");
+    changed(R_HEAD);
+}
 
 /* ----------------------------------------------------------------- input --- */
 static void set_page(int p)
@@ -724,6 +899,24 @@ static void set_page(int p)
     tap_reset();
     app_say("PAGE", p == PG_SET ? "SET" : CUR->mode == MT_GRID ? "GRID" : "CLASSIC");
     changed(R_ALL);
+}
+
+static void key_play(void)               /* PLAY, or the page's START / STOP */
+{
+    if (ui.running) tr_stop();
+    else tr_start();
+}
+
+static void song_try(int w)              /* SET out of EDIT: a white key, or the page's PICK */
+{
+    char t[24];
+    if (!rec.slot[w].used) {
+        t[0] = 0;
+        tint(t, w + 1);
+        tcat(t, " EMPTY");
+        app_say("SONG", t);
+    } else if (w != rec.active || ui.pend >= 0)
+        song_pick(w);
 }
 
 static void key_set(uint32_t k, uint32_t ms, uint32_t btn)   /* SET: the white keys are the songs */
@@ -739,13 +932,7 @@ static void key_set(uint32_t k, uint32_t ms, uint32_t btn)   /* SET: the white k
         return;
     }
     if (!ui.edit) {
-        if (!rec.slot[w].used) {
-            t[0] = 0;
-            tint(t, w + 1);
-            tcat(t, " EMPTY");
-            app_say("SONG", t);
-        } else if (w != rec.active || ui.pend >= 0)
-            song_pick(w);
+        song_try(w);
         return;
     }
     if (btn >> B_SEL & 1u) {             /* EDIT, SEL held: clear it (the last one stays) */
@@ -846,10 +1033,8 @@ static void input(void)
         }
         if (k == B_SEL && rec.page == PG_SET && ui.edit) ui.sel_at = now ? now : 1u;
         if (k == B_HOME) set_page(rec.page == PG_SET ? PG_PAT : PG_SET);
-        else if (k == B_PLAY) {
-            if (ui.running) tr_stop();
-            else tr_start();
-        } else if (k == B_REC) {
+        else if (k == B_PLAY) key_play();
+        else if (k == B_REC) {
             if (rec.page == PG_SET) {
                 ui.edit = (uint8_t)!ui.edit;
                 tap_reset();
@@ -892,7 +1077,7 @@ static void input(void)
         }
         if ((e = plat_enc(EN_K2)) != 0) marking_by(e);
         (void)plat_enc(EN_K3);
-        (void)plat_enc(EN_K4);
+        if ((e = plat_enc(EN_K4)) != 0 && ui.edit) ble_toggle();   /* (EDIT only: not by a brush on stage) */
     } else if (CUR->mode == MT_GRID) {
         if ((e = plat_enc(EN_K1)) != 0) {
             CUR->bpb = (uint8_t)clamp(CUR->bpb + (e > 0 ? 1 : -1), 1, 9);
@@ -1003,7 +1188,22 @@ static void draw_header(void)
     t[0] = 0;
     tcat(t, "SONG ");
     tint(t, rec.active + 1);
-    cv_text(232 - text_w(&FONT_T, t), 11, &FONT_T, t, C_GRAY);
+    {                                    /* then, leftwards: the computer (PC), Bluetooth (BT), MUTE */
+        int32_t x = 232 - text_w(&FONT_T, t);
+        cv_text(x, 11, &FONT_T, t, C_GRAY);
+        if (hl_host(&link, plat_ms())) {
+            x -= 8 + text_w(&FONT_T, "PC");
+            cv_text(x, 11, &FONT_T, "PC", C_BLUE);
+        }
+        if (FM1B_BLE && !bt_off()) {    /* grey while it waits for a computer, blue once one is connected */
+            x -= 8 + text_w(&FONT_T, "BT");
+            cv_text(x, 11, &FONT_T, "BT", plat_ble_connected() ? C_BLUE : C_DIM);
+        }
+        if (au_mute) {
+            x -= 8 + text_w(&FONT_T, "MUTE");
+            cv_text(x, 11, &FONT_T, "MUTE", C_RED);
+        }
+    }
     cv_rect(0, 31, 240, 1, C_LINE);
     cv_blit(0, 0);
 }
@@ -1250,6 +1450,9 @@ void app_init(void)
     ui.pend = -1;
     kq_r = kq_w;
     zero(&xfer, sizeof xfer);
+    zero(&live, sizeof live);
+    au_mute = 0;
+    st_due = st_now = 0;
     hl_init(&link, 0x4D, 0x54, MT_PROTO);   /* "MT" */
     if (plat_store_load(OBJ_METRO, &rec, sizeof rec) != (int)sizeof rec || !rec_valid(&rec)) {
         zero(&rec, sizeof rec);
@@ -1274,6 +1477,7 @@ void app_frame(void)
     ui.cur = tick_now();
     if (tr.switches != last_sw) {        /* a song switch has landed */
         last_sw = tr.switches;
+        st_due = 1;                      /* (the page planned it already: this only confirms it) */
         if (ui.pend >= 0 && !tr.pend) ui.pend = -1, ui.redraw |= R_ALL;
     }
     {
@@ -1291,8 +1495,21 @@ void app_frame(void)
     if (dirty_at && (int32_t)(now - dirty_at) > 3000) rec_save();
     {
         static const uint8_t HELLO[3] = { MT_PROTO, FW_MAJOR, FW_MINOR };
+        uint8_t host, ble = 0;
+#if FM1B_BLE
+        ble_in();
+        ble = (uint8_t)plat_ble_connected();
+#endif
         hl_tick(&link, now, T_HELLO, T_HEARTBEAT, HELLO, 3);
+        host = (uint8_t)hl_host(&link, now);
+        if (!host && au_mute) mute_set(0);   /* the computer gone: the clicks back here, never a silent stage */
+        if (host != ui.host_was || ble != ui.ble_was) {
+            ui.host_was = host;
+            ui.ble_was = ble;
+            ui.redraw |= R_HEAD;
+        }
         sl_pump();
+        st_pump(now);
     }
     lights(now);
     speak();
@@ -1341,6 +1558,13 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "loads")) *got = (int)xfer.loads;
     else if (!strcmp(what, "locked")) *got = (int)ui.locked;
     else if (!strcmp(what, "confirm")) *got = ui.confirm_until != 0;
+    else if (!strcmp(what, "states")) *got = (int)live.states;   /* STATEs sent */
+    else if (!strcmp(what, "ctrls")) *got = (int)live.ctrls;
+    else if (!strcmp(what, "muted")) *got = au_mute;
+    else if (!strcmp(what, "host")) *got = hl_host(&link, plat_ms());
+    else if (!strcmp(what, "transport")) *got = link.transport;
+    else if (!strcmp(what, "ble_off")) *got = bt_off();
+    else if (!strcmp(what, "flags")) *got = rec.flags;
     else return 0;
     return 1;
 }
@@ -1348,6 +1572,29 @@ int app_expect(const char *what, int *got)
 int app_host_cmd(const char *cmd, const char *a, const char *b, const char *c, const char *d)
 {
     (void)b, (void)c, (void)d;
+#if FM1B_BLE
+    if (!strcmp(cmd, "ble_frame")) {     /* ble_frame hello_ack|set_req|start|stop|mute1|mute0|pickN|state: one of the
+                                          * host's frames over Bluetooth, as the own stack hands it over (CIN 4..7) */
+        uint8_t f[16];
+        uint32_t n = 0, pk[8], np, i;
+        f[n++] = 0xF0, f[n++] = 0x7D, f[n++] = 0x4D, f[n++] = 0x54, f[n++] = MT_PROTO;
+        if (!strcmp(a, "hello_ack")) f[n++] = T_HELLO_ACK, f[n++] = MT_PROTO;
+        else if (!strcmp(a, "set_req")) f[n++] = T_SET_REQ;
+        else {
+            f[n++] = T_CTRL;
+            if (!strcmp(a, "start")) f[n++] = C_START;
+            else if (!strcmp(a, "stop")) f[n++] = C_STOP;
+            else if (!strcmp(a, "mute1")) f[n++] = C_MUTE, f[n++] = 1;
+            else if (!strcmp(a, "mute0")) f[n++] = C_MUTE, f[n++] = 0;
+            else if (!strncmp(a, "pick", 4)) f[n++] = C_PICK, f[n++] = (uint8_t)(atoi(a + 4) & 15);
+            else f[n++] = C_STATE;
+        }
+        f[n++] = 0xF7;
+        np = hl_sx_packets(f, n, pk, 8);
+        for (i = 0; i < np; i++) ble_pkt(pk[i]);
+        return 1;
+    }
+#endif
     if (!strcmp(cmd, "count_reset")) {   /* count_reset: the voice counters back to 0 */
         uint32_t i, f = plat_lock();
         for (i = 0; i < MT_NV; i++) tr.nv[i] = 0;

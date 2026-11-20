@@ -5,7 +5,11 @@
 "use strict";
 (function (root) {
   const HEAD = [0x7D, 0x4D, 0x54], VER = 1;
-  const T = { HELLO_ACK: 0x01, SET_REQ: 0x04, SET_LOAD: 0x05, HELLO: 0x41, HEARTBEAT: 0x42, SET: 0x44, SET_DONE: 0x45 };
+  const T = { HELLO_ACK: 0x01, SET_REQ: 0x04, SET_LOAD: 0x05, CTRL: 0x06,
+    HELLO: 0x41, HEARTBEAT: 0x42, SET: 0x44, SET_DONE: 0x45, STATE: 0x46 };
+  // 0.4, the live link: CTRL's ops, STATE's flags (app.c), and the firmware minor they start at
+  const C = { START: 1, STOP: 2, PICK: 3, BPM: 4, MUTE: 5, STATE: 6 };
+  const SF = { RUN: 1, MUTE: 2, NEXT: 4, NOW: 8 }, LIVE_MINOR = 4, SR = 44100, TPB = 12, STATE_N = 48;
   const DONE = { LOADED: 0, DECLINED: 1, REFUSED: 2 };
   const FORMAT = 1, NSLOT = 16, NSTEPS = 16, SONG_N = 28, RECORD_N = 1 + 3 + NSLOT * SONG_N + 2, CHUNK = 49;
   const FRAMES = Math.ceil(RECORD_N / CHUNK);
@@ -118,17 +122,40 @@
     b.push(c & 0xFF, c >> 8);
     return b;
   }
+  function songFrom(d) {   // a song's 28 bytes (the record's, STATE's)
+    return song({ used: d[0] === 1, mode: d[1], bpm: d[2] | d[3] << 8, beats: d[4], div: d[5], accent_every: d[6],
+      sound: d[7], mix: Array.from(d.slice(8, 12)), steps: Array.from(d.slice(12, 28)) });
+  }
+
+  // ------------------------------------------------------- the live link ---
+  // CTRL: the page's hand on the transport. BPM goes as two 7-bit bytes
+  function ctrl(op, arg) {
+    if (op === C.BPM) return frame(T.CTRL, [op, arg & 0x7F, arg >> 7]);
+    return frame(T.CTRL, arg === undefined ? [op] : [op, arg]);
+  }
+  // app.c q8_mul: n ticks of q8 (samples a tick x256) in samples, the device's 32-bit arithmetic exactly
+  function q8Mul(n, q8) { return (n * Math.floor(q8 / 256) + Math.floor((n * (q8 & 255) + 128) / 256)) >>> 0; }
+  // STATE: what plays and when (app.c). Tick t sounds at sample start + q8Mul(t, q8), start = at - q8Mul(tick, q8)
+  function decodeState(payload) {
+    const b = unpack7(payload);
+    if (b.length < STATE_N) throw new Error(`a STATE of ${b.length} bytes, not ${STATE_N}`);
+    const u32 = i => (b[i] | b[i + 1] << 8 | b[i + 2] << 16 | b[i + 3] << 24) >>> 0;
+    const st = { seq: b[0], flags: b[1], active: b[2], songNo: b[3], song: songFrom(b.slice(4, 4 + SONG_N)),
+      tick: u32(32), at: u32(36), q8: u32(40), now: u32(44) };
+    st.running = !!(st.flags & SF.RUN);
+    st.muted = !!(st.flags & SF.MUTE);
+    st.next = !!(st.flags & SF.NEXT);
+    st.start = (st.at - q8Mul(st.tick, st.q8)) >>> 0;
+    return st;
+  }
+
   function fromRecord(b) {
     if (b.length !== RECORD_N) throw new Error(`${b.length} bytes, not ${RECORD_N}`);
     if (b[0] !== FORMAT) throw new Error(`record format ${b[0]}, this page knows ${FORMAT}`);
     const c = crc16(b.slice(0, -2));
     if (b[RECORD_N - 2] !== (c & 0xFF) || b[RECORD_N - 1] !== c >> 8) throw new Error("the record's CRC does not match");
     const songs = [];
-    for (let i = 0; i < NSLOT; i++) {
-      const d = b.slice(4 + i * SONG_N, 4 + (i + 1) * SONG_N);
-      songs.push(song({ used: d[0] === 1, mode: d[1], bpm: d[2] | d[3] << 8, beats: d[4], div: d[5], accent_every: d[6],
-        sound: d[7], mix: d.slice(8, 12), steps: d.slice(12, 28) }));
-    }
+    for (let i = 0; i < NSLOT; i++) songs.push(songFrom(b.slice(4 + i * SONG_N, 4 + (i + 1) * SONG_N)));
     const s = { songs, active: b[1], switch_now: b[2] === 1, page: b[3] };
     check(s);
     return s;
@@ -227,7 +254,8 @@
   const MT = { T, DONE, FORMAT, NSLOT, NSTEPS, RECORD_N, CHUNK, FRAMES, BPM_MIN, BPM_MAX, MODES, SOUNDS, LAYERS, LEVELS,
     MARKS, PRESETS, DIV_NAME, marking, markingJump, gridDefault, presetApply, presetMatch, meterText, song, setlist,
     check, crc16, pack7, unpack7, frame, parse, toRecord, fromRecord, frames, assembler, toJSON, fromJSON,
-    V, hits, barTicks, SND, V_AMP, helloAck: () => frame(T.HELLO_ACK, [VER]) };
+    V, hits, barTicks, SND, V_AMP, helloAck: () => frame(T.HELLO_ACK, [VER]),
+    C, SF, LIVE_MINOR, SR, TPB, songFrom, ctrl, q8Mul, decodeState };
   if (typeof module === "object" && module.exports) module.exports = MT;
   else root.MT = MT;
 })(typeof window !== "undefined" ? window : globalThis);

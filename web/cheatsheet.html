@@ -108,6 +108,8 @@
         <tr><td><kbd>SEL</kbd> + white key</td><td>clear that song (the last one stays)</td></tr>
         <tr><td><kbd>SEL</kbd> held 2 s</td><td><code>CLEAR ALL?</code> <kbd>PLAY</kbd> clears every song (one at 120,
           4/4 stays); any other button, or 5 s, keeps them</td></tr>
+        <tr><td><kbd>K4</kbd></td><td>Bluetooth on / off (kept; on by default). The header shows <code>BT</code>,
+          grey until a computer connects, then blue</td></tr>
         <tr><td><kbd>REC</kbd></td><td>leave EDIT</td></tr>
       </table>
     </section>
@@ -143,10 +145,14 @@
       <h2>With a computer</h2>
       <table>
         <tr><td><a href="./">setlist editor</a></td><td>edit the 16 songs, hear them, save a file; read from or send to
-          the FM-1 (USB, Chrome or Edge)</td></tr>
+          the FM-1 (USB, Chrome or Edge; 0.4: Bluetooth too)</td></tr>
+        <tr><td><a href="live/">live</a> (0.4)</td><td>play along: a conductor beating the song's meter, the bar and the
+          beat; start, stop, pick songs, change the tempo from the page; the clicks from the computer (the header shows
+          <code>MUTE</code>: the FM-1 is silent until the page lets go, or goes away)</td></tr>
         <tr><td>a setlist arrives</td><td>the screen asks <code>LOAD THIS SETLIST?</code> <kbd>PLAY</kbd> yes,
           <kbd>HOME</kbd> no</td></tr>
-        <tr><td>command line</td><td><code>python -m fm1_metronome backup FILE</code> / <code>restore FILE</code></td></tr>
+        <tr><td>command line</td><td><code>python -m fm1_metronome backup FILE</code> / <code>restore FILE</code> /
+          <code>watch</code> (0.4: what plays, as the FM-1 says it)</td></tr>
       </table>
     </section>
   </div>

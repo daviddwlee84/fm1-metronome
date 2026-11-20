@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""python -m fm1_metronome backup FILE | restore FILE [--port NAME]   (PYTHONPATH=host)
+"""python -m fm1_metronome backup FILE | restore FILE | watch [--start|--stop] [--port NAME]   (PYTHONPATH=host)
 
 The setlist of an FM-1 running METRONOME 0.3 or newer into a JSON file, and back (the FM-1 asks first: PLAY loads
-it, HOME keeps what is there). The web page web/index.html does the same in Chrome or Edge."""
+it, HOME keeps what is there). The web page web/index.html does the same in Chrome or Edge. watch (0.4): every
+STATE the FM-1 sends, as it comes, with the time it came (for measuring the link); --start / --stop first."""
 
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ import sys
 import time
 
 from . import __version__
+from . import live as L
 from . import protocol as P
 from . import setlist as S
 
@@ -26,6 +28,8 @@ class Session:
         self.setlist: S.Setlist | None = None
         self.error: str | None = None
         self.done: int | None = None
+        self.states: list[tuple[float, L.State]] = []
+        self.watch = False               # print each STATE as it comes (watch)
 
     def pump(self, timeout: float = 0.1) -> None:
         for data in self.link.poll(timeout):
@@ -50,6 +54,15 @@ class Session:
                     self.setlist, self.asm = s, None
             elif m.type == P.T_SET_DONE and m.payload:
                 self.done = m.payload[0]
+            elif m.type == P.T_STATE:
+                try:
+                    st = L.decode(m.payload)
+                except P.ProtocolError as e:
+                    self.error = str(e)
+                    continue
+                self.states.append((time.time(), st))
+                if self.watch:
+                    self.log(f"[metronome] {time.strftime('%H:%M:%S')} {L.describe(st)}")
 
     def wait_connected(self, seconds: float = 4.0) -> bool:
         end = time.time() + seconds
@@ -88,6 +101,11 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("backup", help="the setlist into a JSON file").add_argument("file")
     sub.add_parser("restore", help="a JSON file onto the FM-1 (it asks first)").add_argument("file")
+    w = sub.add_parser("watch", help="print each STATE (0.4) as it comes; Ctrl-C ends")
+    g = w.add_mutually_exclusive_group()
+    g.add_argument("--start", action="store_true", help="CTRL START first")
+    g.add_argument("--stop", action="store_true", help="CTRL STOP first")
+    w.add_argument("--seconds", type=float, default=0, help="stop after this long (0: until Ctrl-C)")
     a = ap.parse_args(argv)
     from .device import MidiLink, HINT
     try:
@@ -100,6 +118,20 @@ def main(argv: list[str] | None = None) -> int:
         if not s.wait_connected():
             print(f"[metronome] {link.name} is quiet. " + HINT, file=sys.stderr)
             return 1
+        if a.cmd == "watch":
+            if s.firmware and s.firmware < (0, P.LIVE_MINOR):
+                print(f"[metronome] METRONOME {s.firmware[0]}.{s.firmware[1]} has no live link (0.4 and newer)",
+                      file=sys.stderr)
+                return 1
+            s.watch = True
+            s.link.send(P.ctrl(P.C_START if a.start else P.C_STOP if a.stop else P.C_STATE))
+            end = time.time() + a.seconds if a.seconds else None
+            try:
+                while end is None or time.time() < end:
+                    s.pump()
+            except KeyboardInterrupt:
+                pass
+            return 0
         if a.cmd == "backup":
             sl = s.backup()
             fw = f"{s.firmware[0]}.{s.firmware[1]}" if s.firmware else "0.3"

@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""METRONOME's SysEx frames (app.c, "the setlist over USB"):
+"""METRONOME's SysEx frames (app.c, "a computer: USB or Bluetooth"):
 
     F0 7D 4D 54 <ver=1> <type> <payload...> F7       ("MT"; every payload byte 7-bit)
 
 device -> host: HELLO 41 (proto, fw major, fw minor, transport), HEARTBEAT 42 (proto, transport),
-                SET 44 (index, count, chunk 7-bit packed), SET_DONE 45 (0 loaded, 1 declined, 2 refused)
-host -> device: HELLO_ACK 01 (answer every HELLO and HEARTBEAT), SET_REQ 04, SET_LOAD 05 (as SET)
-46 / 06 are kept for a live link.
+                SET 44 (index, count, chunk 7-bit packed), SET_DONE 45 (0 loaded, 1 declined, 2 refused),
+                STATE 46 (0.4: what plays and when, 48 bytes 7-bit packed; live.py)
+host -> device: HELLO_ACK 01 (answer every HELLO and HEARTBEAT), SET_REQ 04, SET_LOAD 05 (as SET),
+                CTRL 06 (0.4: START, STOP, PICK song, BPM, MUTE, STATE?)
 
 crc16, pack7 and unpack7 are THEORY's and MORSE's wire scheme (same author)."""
 
@@ -16,8 +17,10 @@ from dataclasses import dataclass
 
 HEADER = bytes([0x7D, 0x4D, 0x54])
 VER = 1
-T_HELLO_ACK, T_SET_REQ, T_SET_LOAD = 0x01, 0x04, 0x05
-T_HELLO, T_HEARTBEAT, T_SET, T_SET_DONE = 0x41, 0x42, 0x44, 0x45
+T_HELLO_ACK, T_SET_REQ, T_SET_LOAD, T_CTRL = 0x01, 0x04, 0x05, 0x06
+T_HELLO, T_HEARTBEAT, T_SET, T_SET_DONE, T_STATE = 0x41, 0x42, 0x44, 0x45, 0x46
+C_START, C_STOP, C_PICK, C_BPM, C_MUTE, C_STATE = 1, 2, 3, 4, 5, 6
+LIVE_MINOR = 4                           # the firmware's minor (HELLO) from which STATE and CTRL exist
 DONE_LOADED, DONE_DECLINED, DONE_REFUSED = 0, 1, 2
 
 
@@ -48,6 +51,13 @@ def parse(data: bytes) -> Message | None:
 
 def hello_ack() -> bytes:
     return frame(T_HELLO_ACK, bytes([VER]))
+
+
+def ctrl(op: int, *args: int) -> bytes:
+    """CTRL: START, STOP, PICK song (0-15), BPM (30-300, two 7-bit bytes), MUTE 0/1, STATE?"""
+    if op == C_BPM:
+        args = (args[0] & 0x7F, args[0] >> 7)
+    return frame(T_CTRL, bytes([op, *args]))
 
 
 def firmware_of(m: Message) -> tuple[int, int] | None:
