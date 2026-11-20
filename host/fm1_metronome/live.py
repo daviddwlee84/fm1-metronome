@@ -69,6 +69,19 @@ def decode(payload: bytes) -> State:
                  u32(b, 44))
 
 
+def ping(token: int) -> bytes:
+    """PING (0.5): 28 bits of token as four 7-bit bytes; the FM-1 answers PONG with them and its sample now."""
+    return P.ctrl(P.C_PING, *[(token >> (7 * i)) & 0x7F for i in range(4)])
+
+
+def decode_pong(payload: bytes) -> tuple[int, int]:
+    """PONG: (the PING's token, the FM-1's sample when it answered)."""
+    if len(payload) < 9:
+        raise P.ProtocolError(f"a PONG of {len(payload)} bytes")
+    token = sum(payload[i] << (7 * i) for i in range(4))
+    return token, u32(P.unpack7(payload[4:9]), 0)
+
+
 def describe(s: State) -> str:
     g = s.song
     what = (f"{g.beats} beats x{g.div}" if g.mode == 0 else f"CLASSIC accent {g.accent_every}")

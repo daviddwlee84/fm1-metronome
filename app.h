@@ -8,7 +8,8 @@
  * GPL-3.0-or-later; common/ (ledfx, hostlink) is MIT.
  * v0.3: the setlist to a JSON file and back over USB (SysEx "MT", app.c), with a web editor.
  * v0.4: the live link (STATE out, CTRL in: a web page plays along, sounds the clicks, starts, stops and picks songs),
- * over USB or Bluetooth MIDI (SET EDIT K4). */
+ * over USB or Bluetooth MIDI (SET EDIT K4).
+ * v0.5: PING / PONG, so the page sets its clock by the round trip; SET EDIT's footer shows where Bluetooth is. */
 #pragma once
 #include <stdint.h>
 #include "plat.h"

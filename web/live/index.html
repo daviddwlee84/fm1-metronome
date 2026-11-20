@@ -122,9 +122,12 @@
       <span class="dim" id="calhelp">With the FM-1 clicking, press <kbd>T</kbd> (or the button) on 8 beats: the conductor and this page's clicks
         then land with its sound. Kept for USB and Bluetooth apart, in this browser.</span>
     </div>
+    <p id="sync" class="dim"></p>
     <p class="dim">The FM-1 tells this page only what plays and when, on a change and once a second; the page counts
       the beats on its own clock, so the link's jitter (USB a few ms, Bluetooth tens) does not reach the beat. What
-      is left is a fixed delay, which the calibration takes out.</p>
+      is left is a fixed delay, which the calibration takes out. From METRONOME 0.5 the page also times a round trip
+      to the FM-1 each second and sets its clock by it, so the link's own delay (USB about 1 ms, Bluetooth tens)
+      comes out too; what is left is the sound's way out of the FM-1 and of this computer.</p>
   </section>
 </main>
 <script src="../setlist.js"></script>
@@ -155,10 +158,13 @@ const link = MTLink.create({
     L.send(MT.frame(MT.T.SET_REQ));   // the 16 songs, for the keys
     L.send(MT.ctrl(MT.C.STATE));
     enable(true);
+    pinger.start(L);
+    if (wantSound) { sound.start(); send(MT.ctrl(MT.C.MUTE, 1)); }   // (reconnected, say from USB to Bluetooth: as before)
   },
-  onLost() { enable(false); plan.reset(); sound.cancel(); songs = null; drawKeys(); },
-  onFrame(m, ts) {
+  onLost() { enable(false); pinger.stop(); plan.reset(); sound.cancel(); songs = null; drawKeys(); syncInfo(); },
+  onFrame(m, ts, raw, arrived) {
     if (m.type === MT.T.STATE) { live = true; takeState(MT.decodeState(m.payload), ts); }
+    else if (m.type === MT.T.PONG) pinger.pong(MT.decodePong(m.payload), arrived);
     else if (m.type === MT.T.SET && asm) {
       try { const s = asm.feed(m.payload); if (s) { songs = s.songs; asm = null; drawKeys(); } } catch (err) { asm = null; }
     }
@@ -174,6 +180,33 @@ function enable(on) {
   if (!on) { $("sound").classList.remove("on"); sound.on = false; }
 }
 
+// ------------------------------------------------- the clock by round trips ---
+// 0.5: a PING a second; each PONG's round trip sets the clock (live.js), the link's own delay taken out
+const pinger = {
+  timer: 0, token: 0, sent: new Map(),
+  start(L) {
+    this.stop();
+    if (L.firmware && L.firmware[0] === 0 && L.firmware[1] < MT.PING_MINOR) return;   // (0.4: no PONG)
+    const go = () => { this.token = (this.token + 1) & 0xFFFFFFF; this.sent.set(this.token, performance.now()); L.send(MT.ping(this.token));
+      if (this.sent.size > 20) this.sent.delete(this.sent.keys().next().value); };
+    go(); this.timer = setInterval(go, 1000);
+  },
+  stop() { clearInterval(this.timer); this.sent.clear(); },
+  pong(p, arrived) {
+    const t0 = this.sent.get(p.token);
+    if (t0 === undefined) return;
+    this.sent.delete(p.token);
+    const by = clk.by;
+    clk.sync(t0, arrived, p.now);
+    if (by !== clk.by) { loadCal(); sound.replan(); }
+    syncInfo();
+  },
+};
+function syncInfo() {
+  $("sync").textContent = clk.by === "ping" ? `Clock set by round trips: ${clk.rtt.toFixed(1)} ms there and back, the link's delay taken out.`
+    : clk.by === "lag" ? "Clock set by the STATEs (METRONOME 0.4: no round trips), the link's delay still in it: calibrate." : "";
+}
+
 // ---------------------------------------------------------- a STATE comes in ---
 let shown = null;   // the song on the readout
 function takeState(st, arrived) {
@@ -181,7 +214,9 @@ function takeState(st, arrived) {
   if (songs && st.song.used) songs[st.songNo] = st.song;   // (an edit on the FM-1)
   if (!st.next) shown = st.song;
   if (changed) sound.replan();
-  $("sound").classList.toggle("on", st.muted && sound.on);
+  // muted with nothing sounding here: an earlier page's (or link's) mute; the clicks back on the FM-1, never silence
+  if (st.muted && !sound.on && !demo) send(MT.ctrl(MT.C.MUTE, 0));
+  $("sound").classList.toggle("on", sound.on && (st.muted || !!demo));
   $("play").textContent = st.running ? "Stop" : "Start";
   drawKeys();
   readout();
@@ -260,14 +295,15 @@ const sound = {
   },
 };
 $("vol").oninput = () => { if (sound.gain) sound.gain.gain.value = $("vol").value / 100; };
+let wantSound = false;   // the clicks from here, as last asked: kept over a lost link, taken up again on the next
 $("sound").onclick = () => {
-  if (sound.on) { sound.stop(); send(MT.ctrl(MT.C.MUTE, 0)); $("sound").classList.remove("on"); }
-  else { sound.start(); if (demo) $("sound").classList.add("on"); else send(MT.ctrl(MT.C.MUTE, 1)); sound.replan(); }
+  if (sound.on) { wantSound = false; sound.stop(); send(MT.ctrl(MT.C.MUTE, 0)); $("sound").classList.remove("on"); }
+  else { wantSound = true; sound.start(); if (demo) $("sound").classList.add("on"); else send(MT.ctrl(MT.C.MUTE, 1)); sound.replan(); }
 };
 window.addEventListener("pagehide", () => { if (sound.on) send(MT.ctrl(MT.C.MUTE, 0)); });
 
 // ---------------------------------------------------------- the calibration ---
-const calKey = () => `metronome.live.cal.${link.via || "demo"}`;
+const calKey = () => `metronome.live.cal.${link.via || "demo"}.${clk.by || "lag"}`;   // (round trips leave less to calibrate)
 function cal() { return +$("cal").value; }
 function loadCal() { $("cal").value = store.get(calKey(), 0); $("calv").textContent = cal(); }
 $("cal").oninput = () => { $("calv").textContent = cal(); store.set(calKey(), cal()); sound.replan(); };

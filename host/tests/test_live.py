@@ -44,3 +44,12 @@ def test_ctrl_frames_match_basic():
     for f in (P.ctrl(P.C_START), P.ctrl(P.C_STOP), P.ctrl(P.C_PICK, 0), P.ctrl(P.C_BPM, 100),
               P.ctrl(P.C_MUTE, 1), P.ctrl(P.C_MUTE, 0)):
         assert f in sent, f.hex(" ")
+
+
+def test_pong_in_basic():
+    pongs = frames_in_basic("expect_sysex", P.T_PONG)
+    assert len(pongs) == 1
+    token, now = L.decode_pong(P.parse(pongs[0]).payload)
+    assert token == 1 | 2 << 7 | 3 << 14 | 4 << 21
+    assert 0 < now < 44100 * 3600
+    assert L.ping(token) in frames_in_basic("sysex", P.T_CTRL)

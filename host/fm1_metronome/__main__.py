@@ -30,6 +30,8 @@ class Session:
         self.done: int | None = None
         self.states: list[tuple[float, L.State]] = []
         self.watch = False               # print each STATE as it comes (watch)
+        self.pings: dict[int, float] = {}
+        self.rtts: list[float] = []      # PING round trips, ms (0.5)
 
     def pump(self, timeout: float = 0.1) -> None:
         for data in self.link.poll(timeout):
@@ -61,6 +63,15 @@ class Session:
                     self.error = str(e)
                     continue
                 self.states.append((time.time(), st))
+            elif m.type == P.T_PONG:
+                try:
+                    token, _ = L.decode_pong(m.payload)
+                except P.ProtocolError:
+                    continue
+                if token in self.pings:
+                    self.rtts.append((time.time() - self.pings.pop(token)) * 1000)
+                    if self.watch:
+                        self.log(f"[metronome] round trip {self.rtts[-1]:.1f} ms")
                 if self.watch:
                     self.log(f"[metronome] {time.strftime('%H:%M:%S')} {L.describe(st)}")
 
@@ -126,11 +137,19 @@ def main(argv: list[str] | None = None) -> int:
             s.watch = True
             s.link.send(P.ctrl(P.C_START if a.start else P.C_STOP if a.stop else P.C_STATE))
             end = time.time() + a.seconds if a.seconds else None
+            pinged, token = 0.0, 0
             try:
                 while end is None or time.time() < end:
+                    if time.time() - pinged >= 1.0:      # a PING a second (0.5: PONG answers; older ones ignore it)
+                        token, pinged = token + 1, time.time()
+                        s.pings[token] = pinged
+                        s.link.send(L.ping(token))
                     s.pump()
             except KeyboardInterrupt:
                 pass
+            if s.rtts:
+                r = sorted(s.rtts)
+                print(f"[metronome] {len(r)} round trips: least {r[0]:.1f} ms, median {r[len(r) // 2]:.1f} ms")
             return 0
         if a.cmd == "backup":
             sl = s.backup()

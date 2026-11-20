@@ -5,9 +5,10 @@
 
 device -> host: HELLO 41 (proto, fw major, fw minor, transport), HEARTBEAT 42 (proto, transport),
                 SET 44 (index, count, chunk 7-bit packed), SET_DONE 45 (0 loaded, 1 declined, 2 refused),
-                STATE 46 (0.4: what plays and when, 48 bytes 7-bit packed; live.py)
+                STATE 46 (0.4: what plays and when, 48 bytes 7-bit packed; live.py),
+                PONG 47 (0.5: PING's 4 bytes, the sample now packed)
 host -> device: HELLO_ACK 01 (answer every HELLO and HEARTBEAT), SET_REQ 04, SET_LOAD 05 (as SET),
-                CTRL 06 (0.4: START, STOP, PICK song, BPM, MUTE, STATE?)
+                CTRL 06 (0.4: START, STOP, PICK song, BPM, MUTE, STATE?; 0.5: PING)
 
 crc16, pack7 and unpack7 are THEORY's and MORSE's wire scheme (same author)."""
 
@@ -18,9 +19,10 @@ from dataclasses import dataclass
 HEADER = bytes([0x7D, 0x4D, 0x54])
 VER = 1
 T_HELLO_ACK, T_SET_REQ, T_SET_LOAD, T_CTRL = 0x01, 0x04, 0x05, 0x06
-T_HELLO, T_HEARTBEAT, T_SET, T_SET_DONE, T_STATE = 0x41, 0x42, 0x44, 0x45, 0x46
-C_START, C_STOP, C_PICK, C_BPM, C_MUTE, C_STATE = 1, 2, 3, 4, 5, 6
+T_HELLO, T_HEARTBEAT, T_SET, T_SET_DONE, T_STATE, T_PONG = 0x41, 0x42, 0x44, 0x45, 0x46, 0x47
+C_START, C_STOP, C_PICK, C_BPM, C_MUTE, C_STATE, C_PING = 1, 2, 3, 4, 5, 6, 7
 LIVE_MINOR = 4                           # the firmware's minor (HELLO) from which STATE and CTRL exist
+PING_MINOR = 5                           # ... and PING / PONG
 DONE_LOADED, DONE_DECLINED, DONE_REFUSED = 0, 1, 2
 
 
@@ -54,7 +56,7 @@ def hello_ack() -> bytes:
 
 
 def ctrl(op: int, *args: int) -> bytes:
-    """CTRL: START, STOP, PICK song (0-15), BPM (30-300, two 7-bit bytes), MUTE 0/1, STATE?"""
+    """CTRL: START, STOP, PICK song (0-15), BPM (30-300, two 7-bit bytes), MUTE 0/1, STATE?, PING t0 t1 t2 t3"""
     if op == C_BPM:
         args = (args[0] & 0x7F, args[0] >> 7)
     return frame(T_CTRL, bytes([op, *args]))
